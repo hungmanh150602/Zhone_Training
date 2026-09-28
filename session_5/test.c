@@ -1,0 +1,656 @@
+/*
+CASE ??? : test
+CASE 0: pipe
+CASE 1 : ful pipe
+CASE 2 : SIGPIPE
+CASE 3 : use pipe for synchronization
+CASE 4 ; popen (read), pclose
+CASE 5 : popen (write), pclose
+CASE 6 : FIFO writer
+CASE 7 : FIFO reader
+CASE 8 : Message Queue System V
+CASE 9 : Message Queue Posix
+CASE 10: Shared Memory System V
+CASE 11 : client/server shared memory
+CASE 12 : System V Semaphore
+CASE 13 : Signal
+*/
+
+#define CASE 10
+
+#if CASE == 0
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/wait.h>
+
+int main(void)
+{
+    int fd1[2];
+
+    if (pipe(fd1) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    pid_t pid = fork();
+
+    if (pid == -1)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) /* child process */
+    {
+        /* child process close the write end
+           child process simply read
+        */
+        // close(fd1[1]);
+        printf("Before read\n");
+        char buffer[100];
+
+        size_t n = read(fd1[0], buffer, sizeof(buffer) - 1);
+
+        if (n == -1)
+        {
+            perror("read");
+            exit(EXIT_FAILURE);
+        }
+
+        printf("After read\n");
+
+        buffer[n] = '\0';
+        printf("%lu Child received: %s\n", n, buffer);
+
+        close(fd1[0]);
+    }
+    else /* parent process */
+    {
+        /* parent process close the read end
+           parent process simply write
+        */
+        close(fd1[0]);
+        sleep(5);
+        const char *msg = "Hello from Parent";
+        write(fd1[1], msg, strlen(msg));
+        close(fd1[1]);
+        wait(NULL);
+    }
+    return 0;
+}
+#elif CASE == 1
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+
+int main(int argc, char *argv[])
+{
+    int n = 0;
+    int fd[2];
+    if (pipe(fd) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    const char *msg = "HELLO HELLO HELLO HELLO HELLO HELLO";
+    while (1)
+    {
+        write(fd[1], msg, strlen(msg));
+        printf("write %d time\n", n);
+        n++;
+    }
+    return 0;
+}
+#elif CASE == 2
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+
+void signal_handler(int sig)
+{
+    if (sig == SIGPIPE)
+    {
+        printf("write fail with exit signal: SIGPIPE\n");
+    }
+    return;
+}
+
+int main(int argc, char *argv[])
+{
+    signal(SIGPIPE, signal_handler);
+    int fd[2];
+
+    if (pipe(fd) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd[0]);
+
+    const char *msg = "HELLO HELLO HELLO HELLO HELLO HELLO";
+    /*
+    write return the number of byte written
+    return -1 if error
+    */
+    int ret = write(fd[1], msg, strlen(msg));
+    printf("write done with return: %d\n", ret);
+
+    return 0;
+}
+#elif CASE == 3
+#include <stdio.h>
+#include <unistd.h>
+#include <stdlib.h>
+
+int main(int argc, char *argv[])
+{
+    int p_fd[2];
+
+    printf("parent start\n");
+
+    if (pipe(p_fd) != 0)
+    {
+        perror("pipe");
+        return -1;
+    }
+
+    switch (fork())
+    {
+    case -1:
+        /* error */
+        perror("fork");
+        return -2;
+        break;
+
+    case 0:
+        /* child close the read end */
+        if (close(p_fd[0]) == -1)
+        {
+            perror("child close");
+            exit(-3);
+        }
+        /* do something */
+        sleep(5);
+
+        printf("child closed the pipe\n");
+
+        /* close the write end */
+        if (close(p_fd[1]) == -1)
+        {
+            perror("child close");
+            exit(-3);
+        }
+
+        exit(12);
+        break;
+
+    default:
+        break;
+    }
+
+    /* parent close the write end */
+    if (close(p_fd[1]) == -1)
+    {
+        perror("parent close");
+        return -4;
+    }
+
+    char dummy[100];
+
+    read(p_fd[0], &dummy, 100);
+
+    printf("parent ready to run\n");
+
+    return 0;
+}
+#elif CASE == 4
+#include <stdio.h>
+
+/* using popen to run command passed via argument *argv[] */
+int main(int argc, char *argv[])
+{
+    FILE *file;
+    /* run command */
+    file = popen("ls", "r");
+
+    if (file == NULL)
+    {
+        perror("popen");
+        return -1;
+    }
+
+    char buffer[1024];
+
+    /* print out the result */
+    while ((fgets(buffer, sizeof(buffer), file)))
+    {
+        printf("%s", buffer);
+    }
+
+    /* close */
+    pclose(file);
+    return 0;
+}
+#elif CASE == 5
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char *argv[])
+{
+    FILE *file;
+    /* run command */
+    file = popen("grep Hello", "w");
+
+    if (file == NULL)
+    {
+        perror("popen");
+        return -1;
+    }
+
+    fprintf(file, "Hello world!\n");
+    fprintf(file, "Hello world again!\n");
+
+    /* close */
+    pclose(file);
+    return 0;
+}
+#elif CASE == 6
+/*
+This example will reproduce communication between 2 processes:
+The writer:
+    write data to fifo named fifo_A_to_B
+    read data from fifo named fifo_B_to_A
+*/
+#include <stdio.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string.h>
+
+int main(int argc, char *argv[])
+{
+    /* create fifo if it does not exist */
+    mkfifo("/tmp/fifo_A_to_B", 0666);
+
+    char buffer[512];                      /* buffer save data received */
+    const char *msg = "Hello from writer"; /* data to send */
+
+    /* open fifo */
+    int fd = open("/tmp/fifo_A_to_B", O_WRONLY);
+    int fd1 = open("/tmp/fifo_B_to_A", O_RDONLY);
+
+    /* the loop comunication */
+    while (1)
+    {
+        write(fd, msg, strlen(msg));
+
+        int n = read(fd1, buffer, sizeof(buffer) - 1);
+
+        buffer[n] = '\0';
+
+        printf("%s\n", buffer);
+        sleep(1);
+    }
+
+    close(fd);
+    close(fd1);
+    return 0;
+}
+#elif CASE == 7
+/*
+This example will reproduce communication between 2 processes:
+The reader:
+    read data from fifo named fifo_A_to_B
+    write data to fifo named fifo_B_to_A
+*/
+#include <stdio.h>
+#include <fcntl.h>
+#include <string.h>
+
+int main(int argc, char *argv[])
+{
+    /* create fifo if it does not exist */
+    mkfifo("/tmp/fifo_B_to_A", 0666);
+
+    char buffer[512];                      /* buffer save data received */
+    const char *msg = "Hello from reader"; /* data to send */
+
+    /* open fifo */
+    int fd = open("/tmp/fifo_A_to_B", O_RDONLY);
+    int fd1 = open("/tmp/fifo_B_to_A", O_WRONLY);
+
+    /* the loop comunication */
+    while (1)
+    {
+        int n = read(fd, buffer, sizeof(buffer) - 1);
+
+        buffer[n] = '\0';
+
+        printf("%s\n", buffer);
+
+        write(fd1, msg, strlen(msg));
+        sleep(1);
+    }
+
+    close(fd);
+    close(fd1);
+    return 0;
+}
+#elif CASE == 8
+/*
+/* Mode bits for `msgget', `semget', and `shmget'.  /
+#define IPC_CREAT	01000		/* Create key if key does not exist. /
+#define IPC_EXCL	02000		/* Fail if key exists.  /
+#define IPC_NOWAIT	04000		/* Return error on wait.  /
+
+/* Control commands for `msgctl', `semctl', and `shmctl'.  /
+#define IPC_RMID	0		/* Remove identifier.  /
+#define IPC_SET		1		/* Set `ipc_perm' options.  /
+#define IPC_STAT	2		/* Get `ipc_perm' options.  /
+*/
+
+#include <stdio.h>
+#include <sys/ipc.h>
+#include <sys/msg.h>
+#include <string.h>
+#include "type.h"
+
+int main(int argc, char *argv[])
+{
+    key_t key = 1234;
+
+    int msg_id = msgget(key, IPC_CREAT | 0660);
+
+    if (msg_id == -1)
+    {
+        perror("mssget");
+        return -1;
+    }
+
+    /* create message to send */
+    struct message msg1;
+    // msg1.msg_type = 1;
+    strcpy(msg1.msg_text, "HiHiHi HeHeHe");
+
+    /* send message */
+    if (msgsnd(msg_id, &msg1, strlen(msg1.msg_text) + 1, 0) == -1)
+    {
+        perror("msgsnd");
+        return -3;
+    }
+    /***********************************************************/
+
+    /* receive message */
+    struct message receive;
+    if (msgrcv(msg_id, &receive, sizeof(receive.msg_text), 0, 0) == -1)
+    {
+        perror("msgrcv");
+        return -2;
+    }
+
+    struct msqid_ds ds;
+    msgctl(msg_id, IPC_STAT, &ds);
+
+    /* print out information */
+    print_info(key, msg_id, &ds, receive.msg_text, NULL);
+
+    // getchar();
+    return 0;
+}
+#elif CASE == 9
+#include <stdio.h>
+#include <mqueue.h>
+
+int status; /* stored the return value of function to check error */
+
+int main(int argc, char *argv[])
+{
+    struct mq_attr attr, *get_attr;
+
+    attr.mq_flags = 0;
+    attr.mq_maxmsg = 10;
+    attr.mq_msgsize = 256;
+    attr.mq_curmsgs = 0;
+
+    mqd_t mq = mq_open("/hihi", O_CREAT | O_RDWR, 0666, &attr);
+
+    if (mq == -1)
+    {
+        perror("mq_open");
+        return -1;
+    }
+
+    /* print out the message attributes */
+    // status = mq_getattr(mq, get_attr);
+
+    // if(status == -1)
+    // {
+    //     perror("mq_getattr");
+    //     return -4;
+    // }
+
+    // printf("mq_flags: %ld\n", get_attr->mq_flags);
+    // printf("mq_maxmsg: %ld\n", get_attr->mq_maxmsg);
+    // printf("mq_msgsize: %ld\n", get_attr->mq_msgsize);
+    // printf("mq_curmsgs: %ld\n", get_attr->mq_curmsgs);
+
+    /*send message */
+    char msg[] = "Hello HiHi";
+
+    status = mq_send(mq, msg, sizeof(msg), 100);
+
+    if (status == -1)
+    {
+        perror("mq_send");
+        return -2;
+    }
+    /**************************************************/
+
+    /* receive message */
+    char buffer[300];
+    int prio;
+
+    status = mq_receive(mq, buffer, sizeof(buffer), &prio);
+
+    if (status == -1)
+    {
+        perror("mq_receive");
+        return -3;
+    }
+
+    printf("%s\n", buffer);
+    /**************************************************/
+
+    return 0;
+}
+#elif CASE == 10
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <unistd.h>
+#include "type.h"
+#include <string.h>
+
+int main(void)
+{
+    int shmid;
+
+    /* 1. Create shared memory */
+    shmid = shmget(SHARED_MEMORY_KEY, SEGMENT_SIZE, IPC_CREAT | 0666);
+
+    if (shmid == -1)
+    {
+        perror("shmget");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("shmid = %d\n", shmid);
+
+    /* 2. Attach */
+    struct data *ptr = shmat(shmid, NULL, 0);
+
+    if (ptr == (void *)-1)
+    {
+        perror("shmat");
+        exit(EXIT_FAILURE);
+    }
+
+    /* 3. Use shared memory */
+    ptr->x = 10;
+    ptr->y = 12.4;
+    strcpy(ptr->c, "Hello from shared memory");
+
+    /* 4. Get metadata */
+    struct shmid_ds ds;
+
+    if (shmctl(shmid, IPC_STAT, &ds) == -1)
+    {
+        perror("shmctl IPC_STAT");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Size     = %zu bytes\n", ds.shm_segsz);
+    printf("Attached = %lu\n", (unsigned long)ds.shm_nattch);
+    printf("Creator  = %ld\n", (long)ds.shm_cpid);
+
+    /* 5. Detach */
+    if (shmdt(ptr) == -1)
+    {
+        perror("shmdt");
+        exit(EXIT_FAILURE);
+    }
+
+    getchar();
+    /* 6. Remove */
+    if (shmctl(shmid, IPC_RMID, NULL) == -1)
+    {
+        perror("shmctl IPC_RMID");
+        exit(EXIT_FAILURE);
+    }
+
+    return 0;
+}
+#elif CASE == 11
+#elif CASE == 12
+#include "type.h"
+#include <stdio.h>
+#include <sys/sem.h>
+#include <sys/ipc.h>
+
+int ret;
+int num_sem = 5;
+unsigned short value[5];
+
+int main(int argc, char *argv[])
+{
+    int sem_id = semget(SEMAPHORE_KEY, num_sem, IPC_CREAT | 0660);
+
+    if (sem_id == -1)
+    {
+        perror("semget");
+        return -1;
+    }
+    printf("Semaphore id: %d\n", sem_id);
+
+    ret = semctl(sem_id, 0, SETVAL, 12);
+
+    if (ret == -1)
+    {
+        perror("semctl");
+        return -1;
+    }
+
+    ret = semctl(sem_id, 0, GETVAL);
+    printf("%d\n", ret);
+
+    // for (int i = 0; i < num_sem; i++) {
+    //     printf("sem[%d] = %d\n", i, value[i]);
+    // }
+
+    struct sembuf sembuff = {
+        .sem_num = 0,
+        .sem_op = -4,
+        .sem_flg = 0};
+
+    semop(sem_id, &sembuff, 1);
+
+    ret = semctl(sem_id, 0, GETVAL);
+    printf("%d\n", ret);
+
+    semctl(sem_id, 0, IPC_RMID);
+
+    return 0;
+}
+#elif CASE == 13
+#include <stdio.h>
+#include <signal.h>
+#include <unistd.h>
+#include <string.h>
+
+char *buff = NULL;
+
+void signal_handler(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        buff = "signal SIGINT have received\n";
+        write(STDOUT_FILENO, buff, strlen(buff));
+        raise(SIGTERM);
+        break;
+
+    case SIGTERM:
+        buff = "signal SIGTERM have received\n";
+        write(STDOUT_FILENO, buff, strlen(buff));
+        raise(SIGKILL);
+        break;
+
+    default:
+        break;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    pid_t pid = getpid();
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
+    while (1)
+    {
+        printf("process is running\n");
+        sleep(1);
+    }
+
+    return 0;
+}
+#else
+#include <stdio.h>
+#include <sys/shm.h>
+
+int main()
+{
+    key_t key = 1;
+
+    while (1)
+    {
+        int shm_id = shmget(key, 1073741824, IPC_CREAT | 0660);
+        void *ptr = shmat(shm_id, NULL, 0);
+
+        printf("allocated %d GB\n", key);
+        key++;
+    }
+
+    return 0;
+}
+#endif
+
+// 900158380
