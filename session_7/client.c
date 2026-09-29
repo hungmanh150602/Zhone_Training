@@ -32,7 +32,7 @@ void *socket_rev(void *arg)
         if (n == 0)
         {
             printf("server closed!\n");
-            // kill(getpid(), SIGUSR1);
+            kill(getpid(), SIGUSR1);
             sleep(1);
             continue;
         }
@@ -56,15 +56,15 @@ void *getinput(void *arg)
 {
     while (1)
     {
-        // if (fgets(messg_send, sizeof(messg_send), stdin) == NULL)
-        // {
-        //     printf("error fgets\n");
-        //     kill(getpid(), SIGUSR1);
-        //     break;
-        // }
-        // messg_send[strcspn(messg_send, "\n")] = '\0';
+        if (fgets(messg_send, sizeof(messg_send), stdin) == NULL)
+        {
+            printf("error fgets\n");
+            kill(getpid(), SIGUSR1);
+            break;
+        }
+        messg_send[strcspn(messg_send, "\n")] = '\0';
 
-        strcpy(messg_send, "Hello Hihi");
+        // strcpy(messg_send, "Hello Hihi");
 
         int n = write(fd_client, messg_send, strlen(messg_send));
 

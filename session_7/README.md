@@ -737,3 +737,193 @@ send("STOP")
 ```
 
 If each command requires a quick response, TCP's data aggregation can negatively impact latency.
+
+## `fcntl` function
+
+> A socket descriptor is also a file descriptor; therefore, `fcntl()` operations can be applied to sockets.
+
+Prototype:
+
+```c
+#include <fcntl.h>
+
+int fcntl (int __fd, int __cmd, ...);
+
+/* For a successful call, the return value depends on the operation.
+   On error, -1 is returned, and errno is set to indicate the error. */
+```
+
+For example, if we want to change the state of a file, we should first retrieve the current value and then add the new state, rather than simply using `set` to overwrite the entire existing state.
+
+```c
+int flags = fcntl(sockfd, F_GETFL, 0);
+
+fcntl(sockfd, F_SETFL, flags | O_NONBLOCK);
+```
+
+**Not only can you enable it, but you can also clear the flag:**
+
+```c
+int flags = fcntl(sockfd, F_GETFL, 0);
+
+flags &= ~O_NONBLOCK;
+
+fcntl(sockfd, F_SETFL, flags);
+```
+
+Some commands use with `fcntl()` functions:
+
+| `cmd`                | Purpose                      | Target / main flag           | Notes                                |
+| -------------------- | ---------------------------- | ---------------------------- | ------------------------------------ |
+| `F_DUPFD`            | Duplicate FD                 | `arg = min_fd`               | Create new FD ≥ `min_fd`             |
+| `F_DUPFD_CLOEXEC`    | Duplicate FD + close-on-exec | `arg = min_fd`               | Equivalent to duplicate + `FD_CLOEXEC` |
+| `F_GETFD`            | Read **FD flags**            | `FD_CLOEXEC`                 | Returns FD flags                     |
+| `F_SETFD`            | Write **FD flags**           | `FD_CLOEXEC`                 | Often used with `exec()`             |
+| `F_GETFL`            | Read **file status flags**   | `O_NONBLOCK`, `O_APPEND`,... | Crucial for sockets                  |
+| `F_SETFL`            | Write **file status flags**  | `O_NONBLOCK`, `O_ASYNC`,...  | Used to enable/disable non-blocking  |
+|-------------------------------------|-------------------------------------|-------------------------------------|-------------------------------------|
+| `F_GETOWN`           | Get SIGIO owner              | process/process group        | Signal-driven I/O                    |
+| `F_SETOWN`           | Set SIGIO owner              | PID/PGID                     | Used with `O_ASYNC`                  |
+| `F_GETOWN_EX`        | Get extended owner           | `struct f_owner_ex`          | Linux-specific                       |
+| `F_SETOWN_EX`        | Set extended owner           | `struct f_owner_ex`          | Linux-specific                       |
+| `F_GETSIG`           | Get signal used for SIGIO    | signal number                | Signal-driven I/O                    |
+| `F_SETSIG`           | Set signal for SIGIO         | signal number                | Signal-driven I/O                    |
+| `F_SETLEASE`         | Set file lease               | lease type                   | File locking |
+| `F_GETLEASE` | Get lease file | — | File locking |
+| `F_NOTIFY` | Directory notifications | DN_* | Linux-specific |
+| `F_SETPIPE_SZ` | Set pipe capacity | bytes | Linux-specific |
+| `F_GETPIPE_SZ` | Get pipe capacity | bytes | Linux-specific |
+| `F_ADD_SEALS` | Add seals | `F_SEAL_*` | Mainly with `memfd` |
+| `F_GET_SEALS` | Get seals | — | `memfd` |
+| `F_SET_RW_HINT` | Set write-life hint | `RWH_*` | Linux-specific |
+| `F_GET_RW_HINT` | Get write-life hint | `RWH_*` | Linux-specific |
+| `F_SET_FILE_RW_HINT` | Set file write-life hint | `RWH_*` | Linux-specific |
+| `F_GET_FILE_RW_HINT` | Get the file write-life hint | `RWH_*` | Linux-specific |
+
+# I/O Model
+
+## Blocking vs Non-Blocking I/O
+
+When we use `recvfrom` function, if the data is not available, this function will block the process.
+
+![alt text](image-13.png)
+
+If we use `fcntl` to set `O_NONBLOCK`, the process will no block when the data is not available.
+
+![alt text](image-14.png)
+
+**The issue with non-blocking I/O**
+
+If we have 100 clients and all of them use non-blocking mode, we would have to constantly check their status; this consumes a significant amount of CPU resources.
+We need a mechanism to notify us which sockets are ready for I/O operations.
+
+> -> This is **I/O Mutiplexing**
+
+## I/O Mutiplexing
+
+|API||Function|
+|----|----|----|
+|`select()`|||
+|`poll()`|||
+|`pselect()`|||
+|`epoll()`|||
+
+***I/O multiplexing*** is typically used in networking applications in the following scenarios:
+
+- When a client is handling multiple descriptors (normally interactive input and a network socket), I/O multiplexing should be used.
+
+- It is possible, but rare, for a client to handle multiple sockets at the same time.
+
+- If a TCP server handles both a listening socket and its connected sockets, I/O multiplexing is normally used.
+
+- If a server handles both TCP and UDP, I/O multiplexing is normally used.
+
+- If a server handles multiple services and perhaps multiple protocols I/O multiplexing is normally used.
+
+The idea of ***I/O multiplexing***
+
+```text
+                            +----------------+
+            client 1 ──────►                 │
+            client 2 ──────►                 │
+            client 3 ──────►     Kernel      │
+            client 4 ──────►                 │
+            client 5 ──────►                 │
+                            +-------┬--------+
+                                    │
+                                    │ ready
+                                    ▼
+                               Application
+```
+
+We don't need `read(client1)`, `read(client2)`, ... but ask kernel `What socket is ready?`. Then read it.
+
+With I/O multiplexing, we call select or poll and block in one of these two system calls, instead of blocking in the actual I/O system call. Figure below is a summary of the I/O multiplexing model.
+
+![alt text](image-15.png)
+
+## select Function
+
+Prototype:
+
+```c
+int select(
+    int nfds,
+    fd_set *readfds,
+    fd_set *writefds,
+    fd_set *exceptfds,
+    struct timeval *timeout
+);
+```
+
+|API||Function|
+|----|----|----|
+|void FD_ZERO(fd_set *fdset);||clear all bits in fdset|
+|void FD_SET(int fd, fd_set *fdset);||turn on the bit for fd in fdset|
+|void FD_CLR(int fd, fd_set *fdset);||turn off the bit for fd in fdset|
+|int FD_ISSET(int fd, fd_set *fdset);||is the bit for fd on in fdset ?|
+
+**Maximum Number of Descriptors for select**
+
+When select was originally designed, the OS normally had an upper limit on the maximum number of descriptors per process (the 4.2BSD limit was 31), and select just used this same limit. But, current versions of Unix allow for a virtually unlimited number of descriptors per process (often limited only by the amount of memory and any administrative limits).
+
+**`select()` has a problem.**
+
+Consider a case that have 10,000 connections. Each time `select()` is called. The kernel must process a set of file descriptors (FDs).
+
+The application also typically has to scan through them:
+
+```c
+   for (i = 0; i < maxfd; i++)
+   {
+      if (FD_ISSET(i, &readfds))
+   }
+```
+
+In other words:
+
+```text
+          10,000 FDs
+              ↓
+            scan
+              ↓
+            check
+              ↓
+          find ready FDs
+```
+
+If only two sockets are ready:
+
+```text
+10,000 sockets
+      │
+      ▼
+    scan
+      │
+      ├── 9,998 not ready
+      ├── 2 ready
+      ▼
+      process
+```
+
+This is part of the reason why select() does not scale well when the number of connections is very large.
