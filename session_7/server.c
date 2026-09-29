@@ -3,7 +3,7 @@ CASE 0 : TCP
 CASE 1 : UDP
 */
 
-#define CASE 1
+#define CASE 0
 
 #if CASE == 0
 
@@ -23,6 +23,7 @@ int client_fd;
 char sock_rev[128];
 char buf[20];
 char messg_send[128];
+char *buff = NULL;
 
 int init_ipv4_socket(const char *ip, const uint16_t port, const int sock_type)
 {
@@ -114,8 +115,9 @@ void *socket_rev(void *arg)
         if (n == 0)
         {
             printf("Client port[%d] closed!\n", port);
-            kill(getpid(), SIGUSR1);
-            break;
+            // kill(getpid(), SIGUSR1);
+            sleep(1);
+            continue;
         }
 
         if (n < 0)
@@ -135,8 +137,9 @@ void *socket_rev(void *arg)
         if (n < 0)
         {
             perror("write");
-            kill(getpid(), SIGUSR1);
-            break;
+            // kill(getpid(), SIGUSR1);
+            sleep(1);
+            continue;
         }
     }
 
@@ -185,12 +188,14 @@ void handle(int sig)
 
     case SIGUSR1:
         close(client_fd);
-        printf("\nchild exit.\n");
+        buff = "\nchild exit.\n";
+        write(STDOUT_FILENO, buff, strlen(buff));
         _exit(1);
         break;
 
     case SIGPIPE:
-        printf("client don't read.\n");
+        buff = "client don't read.\n";
+        write(STDOUT_FILENO, buff, strlen(buff));
         break;
 
     case SIGCHLD:

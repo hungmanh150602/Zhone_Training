@@ -3,7 +3,7 @@ CASE 0 : TCP
 CASE 1 : UDP
 */
 
-#define CASE 1
+#define CASE 0
 
 #if CASE == 0
 
@@ -21,6 +21,7 @@ int fd_client;
 char sock_rev[128];
 char buf[20];
 char messg_send[128];
+char *buff = NULL;
 
 void *socket_rev(void *arg)
 {
@@ -31,8 +32,9 @@ void *socket_rev(void *arg)
         if (n == 0)
         {
             printf("server closed!\n");
-            kill(getpid(), SIGUSR1);
-            break;
+            // kill(getpid(), SIGUSR1);
+            sleep(1);
+            continue;
         }
 
         if (n < 0)
@@ -54,13 +56,15 @@ void *getinput(void *arg)
 {
     while (1)
     {
-        if (fgets(messg_send, sizeof(messg_send), stdin) == NULL)
-        {
-            printf("error fgets\n");
-            kill(getpid(), SIGUSR1);
-            break;
-        }
-        messg_send[strcspn(messg_send, "\n")] = '\0';
+        // if (fgets(messg_send, sizeof(messg_send), stdin) == NULL)
+        // {
+        //     printf("error fgets\n");
+        //     kill(getpid(), SIGUSR1);
+        //     break;
+        // }
+        // messg_send[strcspn(messg_send, "\n")] = '\0';
+
+        strcpy(messg_send, "Hello Hihi");
 
         int n = write(fd_client, messg_send, strlen(messg_send));
 
@@ -68,7 +72,7 @@ void *getinput(void *arg)
         {
             perror("write");
             // kill(getpid(), SIGUSR1);
-            // break;
+            sleep(1);
             continue;
         }
 
@@ -84,17 +88,19 @@ void handle(int sig)
     {
     case SIGINT:
         close(fd_client);
-        exit(0);
+        _exit(0);
         break;
 
     case SIGUSR1:
         close(fd_client);
-        printf("\nclient closed.\n");
-        exit(1);
+        buff = "\nclient closed.\n";
+        write(STDOUT_FILENO, buf, strlen(buf));
+        _exit(1);
         break;
 
     case SIGPIPE:
-        printf("server don't read.\n");
+        buff = "server don't read.\n";
+        write(STDOUT_FILENO, buf, strlen(buf));
         break;
 
     default:
@@ -196,6 +202,23 @@ int main(int argc, char *argv[])
         return -1;
     }
 
+    int size = 2048;
+    // socklen_t len = sizeof(size);
+
+    /* set buffer receiver */
+    if (setsockopt(udp_client, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) != 0)
+    {
+        printf("error set\n");
+    }
+
+    int get_size;
+    socklen_t len = sizeof(get_size);
+
+    if (getsockopt(udp_client, SOL_SOCKET, SO_RCVBUF, &get_size, &len) == 0)
+    {
+        printf("%d\n", get_size);
+    }
+
     while (1)
     {
         char msg_send[1024];
@@ -205,6 +228,8 @@ int main(int argc, char *argv[])
         if (fgets(msg_send, sizeof(msg_send), stdin) == NULL)
             break;
 
+        // strcpy(msg_send, "Maria Ozawa /\\ Eimi Fukada");
+
         int m = sendto(udp_client, msg_send, strlen(msg_send), 0,
                        (struct sockaddr *)&addr_server, sizeof(addr_server));
 
@@ -213,6 +238,8 @@ int main(int argc, char *argv[])
             perror("sendto");
             continue;
         }
+
+        // printf("sent.\n");
 
         struct sockaddr_in addr_rev;
         socklen_t addr_len = sizeof(addr_rev);

@@ -16,7 +16,7 @@ CASE 12 : System V Semaphore
 CASE 13 : Signal
 */
 
-#define CASE 10
+#define CASE 13
 
 #if CASE == 0
 #include <stdio.h>
@@ -605,13 +605,12 @@ void signal_handler(int sig)
     case SIGINT:
         buff = "signal SIGINT have received\n";
         write(STDOUT_FILENO, buff, strlen(buff));
-        raise(SIGTERM);
         break;
 
-    case SIGTERM:
-        buff = "signal SIGTERM have received\n";
+    case SIGALRM:
+        buff = "signal SIGALRM have received\n";
         write(STDOUT_FILENO, buff, strlen(buff));
-        raise(SIGKILL);
+        raise(SIGINT);
         break;
 
     default:
@@ -623,11 +622,24 @@ int main(int argc, char *argv[])
 {
     pid_t pid = getpid();
     signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-    while (1)
+    signal(SIGALRM, signal_handler);
+
+    printf("process is running\n");
+
+    char buf[256];
+
+    alarm(5);
+
+    if(pause() == -1)
     {
-        printf("process is running\n");
-        sleep(1);
+        printf("interrupted by signal\n");
+    }
+
+    int ret = read(STDIN_FILENO, buf, sizeof(buf));
+
+    if (ret == -1)
+    {
+        printf("read failed\n");
     }
 
     return 0;
@@ -638,16 +650,6 @@ int main(int argc, char *argv[])
 
 int main()
 {
-    key_t key = 1;
-
-    while (1)
-    {
-        int shm_id = shmget(key, 1073741824, IPC_CREAT | 0660);
-        void *ptr = shmat(shm_id, NULL, 0);
-
-        printf("allocated %d GB\n", key);
-        key++;
-    }
 
     return 0;
 }

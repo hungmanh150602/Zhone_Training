@@ -923,4 +923,264 @@ Traditional signals once operated under semantics known as "unreliable signals."
 
 The basic idea:
 
->Signals might not be preserved as expected if multiple signals occur while the handler is currently processing.
+> Signals might not be preserved as expected if multiple signals occur while the handler is currently processing.
+
+If a signal is in a pending state and other similar signals arrive, they will not be queued like messages in a message queue.
+
+```text
+             SIGINT
+                |
+                v
+             pending
+
+             SIGINT
+                |
+                v
+           already pending
+
+             SIGINT
+                |
+                v
+          already pending
+```
+
+## Interrupted System Calls
+
+If a process is blocked while making a system call and a signal is sent to it, the blocked state will be interrupted, and the function will return an error code of -1 (if applicable).
+
+Example:
+
+```c
+void signal_handler(int sig)
+{
+    printf("signal SIGINT have received\n");
+}
+
+int main(int argc, char *argv[])
+{
+    signal(SIGINT, signal_handler);
+
+    printf("process is running\n");
+
+    char buf[256];
+
+    int ret = read(STDIN_FILENO, buf, sizeof(buf));
+
+    if (ret == -1)
+    {
+        printf("read failed\n");
+    }
+
+    return 0;
+}
+```
+
+```text
+process is running
+^Csignal SIGINT have received
+```
+
+When the process is running, we press `Ctrl+C` to send signal `SIGINT` to the process. The block state when `read` is interrupted.
+
+## sigaction()
+
+> NOTE:  
+> A signal can interrupt a system call. The subsequent behavior depends on:
+>
+> - the type of system call
+> - the signal disposition
+> - SA_RESTART
+> - kernel/libc semantics
+
+Example:
+
+```c
+struct sigaction sa;
+
+sa.sa_handler = handler;
+sigemptyset(&sa.sa_mask);
+sa.sa_flags = SA_RESTART;
+
+sigaction(SIGUSR1, &sa, NULL);
+```
+
+`SA_RESTART` requests some interrupted system calls auto restart.
+
+## Reentrant Functions
+
+> A function is reentrant if it can be called again before a previous invocation has completed and still operate correctly.
+
+Not all functions are safe to use within a signal handler.
+
+A crucial rule:
+
+> Only call functions defined by POSIX as async-signal-safe within a signal handler.  
+> Example:
+>
+> - write()
+> - _exit()
+> - kill()
+> - signal()
+
+Note: `printf()` is very easy to use in ***demos*** but is not a safe choice for production signal handlers.
+
+**Why is printf() dangerous?**
+
+If a signal occurs while a process is writing data to the `stdout` buffer, the write operation is interrupted; if the signal handler subsequently calls `printf()`, the buffer may be overwritten, resulting in unintended output.
+
+## volatile sig_atomic_t
+
+When a signal occurs, the handler function simply needs to set a `flag` variable to 1 to notify the main program for processing, rather than performing complex tasks within the function itself.
+
+Example:
+
+```c
+volatile sig_atomic_t flag = 0;
+
+void handler(int sig)
+{
+    flag = 1;
+}
+
+int main()
+{
+    while (flag)
+    {
+        /* do work */
+        flag = 0;
+    }
+}
+```
+
+## Reliable Signals
+
+### kill() / raise()
+
+```c
+kill(pid, signal);
+```
+
+Send `signal` to the process with PID = pid.
+
+|pid||Meaning|
+|---|---|---|
+|> 0||Send to the specific process|
+|0||Send to the current process group|
+|< -1||Send to process group with PGID|
+|-1||Sent to all processes that the caller has permission to signal|
+
+**Compare `kill()` with `raise()`:**
+
+| | `kill()`             | `raise()`                 |
+| ---------------- | -------------------- | ------------------------- |
+| Sent to          | process/group        | the process itself        |
+| Uses PID         | Yes                  | No                        |
+| Inter-process IPC| Yes                  | Not the primary purpose   |
+| Example          | `kill(pid, SIGUSR1)` | `raise(SIGUSR1)`          |
+
+### alarm() / pause()
+
+**alarm**
+
+> alarm() : Timer using signals.
+
+```c
+#include <unistd.h>
+
+unsigned int alarm(unsigned int seconds);
+/* The return value is the number of seconds remaining
+                 for the previous alarm, if any. */
+
+/* Example */
+alarm(5);
+
+/* After approximately 5 seconds,
+ * the process will receive a `SIGALRM`.
+ */
+```
+
+> alarm() has only one timer.
+
+```c
+/* if before */
+alarm(10);
+/* then */
+alarm(3);
+/* The 10-second timer was replaced by a 3-second timer. */
+```
+
+> Use `alarm(0)` to cancel the current alarm.
+
+**pause**
+
+> `pause()` puts the process to sleep until a signal is received and its handler is executed.
+
+Prototype:
+
+```c
+#include <unistd.h>
+
+int pause(void);
+```
+
+**Combine `alarm() + pause()`**
+
+```c
+void handler(int sig)
+{
+    printf("SIGALRM received\n");
+}
+
+int main(void)
+{
+    signal(SIGALRM, handler);
+
+    alarm(5);
+
+    printf("waiting...\n");
+
+    pause();
+
+    printf("done\n");
+
+    return 0;
+}
+```
+
+## Signal Set
+
+```c
+sigset_t set;
+```
+
+The main API:
+
+|API||Effect|
+|---|---|---|
+|`sigemptyset()`||Create an empty signal set|
+|`sigfillset()`||Add all signals to the set|
+|`sigaddset()`||Add another signal|
+|`sigdelset()`||Delete signal|
+|`sigismember()`||Check if the signal is in the set|
+
+Exxample:
+
+```c
+sigset_t set;
+
+sigemptyset(&set); /* set = {} */
+sigfillset(&set); /* set = { SIGHUP,
+                             SIGINT,
+                             SIGQUIT,
+                             ...
+                             } */
+sigaddset(&set, SIGUSR1); /* add SIGUSR1 */
+sigaddset(&set, SIGUSR2); /* add SIGUSR2 */
+sigdelset(&set, SIGUSR1); /* delete SIGUSR1 */
+
+int ret = sigismember(&set, SIGUSR1);
+/* Return: 1 -> có
+           0 -> không
+           -1 -> error */
+```
+

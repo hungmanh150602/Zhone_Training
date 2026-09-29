@@ -581,3 +581,159 @@ There are various ways to get and set the options that affect a socket:
 - The getsockopt and setsockopt functions
 - The fcntl function
 - The ioctl function
+
+## `getsockopt` and `setsockopt` Functions
+
+```c
+#include <sys/socket.h>
+
+int getsockopt(int sockfd, int level, int optname,
+               void *optval, socklen_t *optlen);
+
+int setsockopt(int sockfd, int level, int optname,
+               const void *optval, socklen_t optlen);
+               
+            /* Both return : 0 if OK, −1 on error */
+```
+
+| Argument | ------ | Meaning |
+| --- | --- | --- |
+| `sockfd` | | refer to an open socket descriptor |
+| `level` | | determine which system processes the option |
+| `optname` | | name of the socket option to be manipulated |
+| `optval` | | pointer to the memory area containing the option value |
+| `optlen` | | size of the data pointed to by optval |
+
+**level**
+
+| `level` | The option belongs | Example name |
+| -------------- | ------------------ | -------------------------------------------------------- |
+| `SOL_SOCKET`   | common socket layer | `SO_RCVBUF`, `SO_SNDBUF`, `SO_REUSEADDR`, `SO_KEEPALIVE` |
+| `IPPROTO_IP`   | IPv4               | `IP_TTL`, `IP_TOS`                                       |
+| `IPPROTO_IPV6` | IPv6               | `IPV6_V6ONLY`, ...                                       |
+| `IPPROTO_TCP`  | TCP                | `TCP_NODELAY`, `TCP_KEEPIDLE`                            |
+| `IPPROTO_UDP`  | UDP                | some UDP-specific options                              |
+
+```text
+              SOL_SOCKET
+                  → socket-level
+
+              IPPROTO_IP
+                  → IPv4-level
+
+              IPPROTO_TCP
+                  → TCP-level
+```
+
+## Generic Socket Options (SOL_SOCKET)
+
+| Option         | Data Type        | Main Function                                                                  |
+| -------------- | ---------------- | ------------------------------------------------------------------------------ |
+| `SO_REUSEADDR` | `int`            | Allows reuse of the local address under appropriate conditions                 |
+| `SO_REUSEPORT` | `int`            | Allows multiple sockets to use the same local address/port under appropriate conditions |
+| `SO_RCVBUF`    | `int`            | Receive buffer size                                                            |
+| `SO_SNDBUF`    | `int`            | Send buffer size                                                               |
+| `SO_KEEPALIVE` | `int`            | Enables TCP keepalive                                                          |
+| `SO_RCVTIMEO`  | `struct timeval` | Timeout for certain receive operations                                         |
+| `SO_SNDTIMEO`  | `struct timeval` | Timeout for certain send operations                                            |
+| `SO_BROADCAST` | `int`            | Allows broadcasting                                                            |
+| `SO_ERROR`     | `int`            | Reads pending socket errors                                                    |
+| `SO_TYPE`      | `int`            | Reads the socket type                                                          |
+| `SO_LINGER`    | `struct linger`  | Controls `close()` behavior                                                    |
+
+### SO_RCVBUF
+
+```c
+int size = 4096;
+    // socklen_t len = sizeof(size);
+
+    /* set buffer receiver */
+    if (setsockopt(udp_client, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size)) != 0)
+    {
+        printf("error set\n");
+    }
+
+    int get_size;
+    socklen_t len = sizeof(get_size);
+
+    if (getsockopt(udp_client, SOL_SOCKET, SO_RCVBUF, &get_size, &len) == 0)
+    {
+        printf("%d\n", get_size);
+    }
+```
+
+```text
+8192
+```
+
+##  IPV4 socket options
+
+> These options control the behavior of the IPv4 layer.
+
+Some important options
+
+| Options | Type | Function |
+| -------------------- | ---------------- | ------------------------------------------------ |
+| `IP_TTL` | `int` | IPv4 Time To Live |
+| `IP_TOS` | `int` | IPv4 Type of Service / DS field |
+| `IP_RECVTTL` | `int` | Get TTL of packet |
+| `IP_PKTINFO` | `int` | Get interface/local address information |
+| `IP_MULTICAST_TTL` | `int` | TTL for IPv4 multicast |
+| `IP_MULTICAST_LOOP` | `int` | Is there a loop multicast packet to the local host?
+| `IP_ADD_MEMBERSHIP` | `struct ip_mreq` | Join multicast group |
+| `IP_DROP_MEMBERSHIP` | `struct ip_mreq` | Leave multicast group |
+
+## TCP options
+
+Some TCP options
+
+| Option          | Meaning                                               |
+| --------------- | ----------------------------------------------------- |
+| `TCP_NODELAY`   | Disable Nagle's algorithm                             |
+| `TCP_MAXSEG`    | TCP Maximum Segment Size                              |
+| `TCP_KEEPIDLE`  | Idle time before TCP keepalive begins                 |
+| `TCP_KEEPINTVL` | Interval between keepalive probes                     |
+| `TCP_KEEPCNT`   | Number of probes without ACK before considering the connection dead |
+| `TCP_CORK`      | Aggregate small data packets before sending           |
+| `TCP_QUICKACK`  | Request faster TCP ACK transmission in certain cases  |
+
+### TCP_NODELAY
+
+> If set, this option disables TCP’s ***Nagle algorithm***
+
+**Why is *Nagle algorithm*?**
+
+The purpose of the ***Nagle algorithm*** is to reduce the number of small packets.
+
+Suppose that we continously send very small data. 
+We have many packet, each packet has its header but just contains 1 byte.
+
+![alt text](image-11.png)
+
+-> Non effected.
+
+> The idea of ***Nagle algorithm***:
+>
+>>If there is small, unacknowledged data, TCP can hold back subsequent small data and aggregate it into a larger segment.
+
+![alt text](image-12.png)
+
+**When is `TCP_NODELAY` useful?**
+
+Examples of applications requiring low latency:
+
+- robot control
+- interactive terminals
+- near real-time command and control
+- gaming
+- small request/response exchanges
+
+Robot example:
+
+```c
+send("L")
+send("R")
+send("STOP")
+```
+
+If each command requires a quick response, TCP's data aggregation can negatively impact latency.
