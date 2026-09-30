@@ -1179,8 +1179,118 @@ sigaddset(&set, SIGUSR2); /* add SIGUSR2 */
 sigdelset(&set, SIGUSR1); /* delete SIGUSR1 */
 
 int ret = sigismember(&set, SIGUSR1);
-/* Return: 1 -> có
-           0 -> không
+/* Return: 1 -> yes
+           0 -> no
            -1 -> error */
 ```
 
+### sigprocmask()
+
+> It is used to change the signal mask of a process or thread.
+
+Prototype:
+
+```c
+int sigprocmask(int how,
+                const sigset_t *set,
+                sigset_t *oldset);
+
+/* returns 0 on success.  On failure, -1 is returned
+       and errno is set to indicate the error. */
+```
+
+`how` has three important values:
+
+|value||mean|
+|---|---|---|
+|SIG_BLOCK||The set of blocked signals is the union of the current set and the set argument|
+|SIG_UNBLOCK||The signals in set are removed from the current set of blocked signals|
+|SIG_SETMASK||Replace the entire current mask with the set|
+
+`sigpending()` : It retrieves the set of pending signals.
+
+### sigaction()
+
+Prototype:
+
+```c
+int sigaction(
+    int signum,
+    const struct sigaction *act,
+    struct sigaction *oldact
+);
+```
+
+Structure:
+
+```c
+struct sigaction {
+    void     (*sa_handler)(int);
+    sigset_t   sa_mask;
+    int        sa_flags;
+    void     (*sa_sigaction)(int, siginfo_t *, void *);
+};
+```
+
+**Important flags**
+
+| Flag           | Meaning                                                              |
+| -------------- | -------------------------------------------------------------------- |
+| `SA_RESTART`   | Automatically restart certain system calls interrupted by a signal   |
+| `SA_NODEFER`   | Do not automatically block the signal currently being handled        |
+| `SA_RESETHAND` | Reset the signal disposition to default when the handler starts      |
+| `SA_SIGINFO`   | Use `sa_sigaction` instead of `sa_handler` to receive extra signal info |
+| `SA_NOCLDSTOP` | For `SIGCHLD`: do not receive a signal when a child is merely stopped |
+| `SA_NOCLDWAIT` | For `SIGCHLD`: prevent the child from becoming a zombie              |
+
+### sigsuspend()
+
+> Temporarily replaces the signal mask of the calling thread with the mask given by mask and then suspends the thread until delivery of a signal whose action is to invoke a signal handler or to terminate a process.
+
+When we call `sigsuspend()`, kernel atomically transitions the state:
+
+```text
+                OLD MASK
+                ────────────
+                SIGUSR1 BLOCKED
+
+                        ↓ sigsuspend()
+
+                TEMP MASK
+                ────────────
+                SIGUSR1 UNBLOCKED
+```
+
+Example, first we block signal `SIGUSR1` and then we use `sigsuspend()` to temporarily unlock this signal, the process operates as follow:
+
+```text
+                          Process
+                             │
+                      SIGUSR1 BLOCKED
+                             │`
+                             ▼
+                         running code
+                             |
+                             ▼
+                        sigsuspend()
+                             │
+                             ▼
+                    ┌─────────────────┐
+                    │ SIGUSR1 UNBLOCK │
+                    │                 │
+                    │      SLEEP      │
+                    └────────┬────────┘
+                             │
+                             │ SIGUSR1
+                             ▼
+                         handler()
+                             │
+                             ▼
+                     handler return
+                             │
+                             ▼
+                     restore OLD MASK
+                             │
+                             ▼
+                   sigsuspend() returns
+```

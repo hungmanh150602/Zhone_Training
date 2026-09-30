@@ -883,6 +883,24 @@ int select(
 |void FD_CLR(int fd, fd_set *fdset);||turn off the bit for fd in fdset|
 |int FD_ISSET(int fd, fd_set *fdset);||is the bit for fd on in fdset ?|
 
+`select()` modifies the fd_set. When we create a `readfds` fd_set example:
+
+```c
+FD_SET(3, &readfds);
+FD_SET(5, &readfds);
+FD_SET(7, &readfds);
+```
+
+Then `readfds` has bit 3,5,7 is set to 1. We call `select` and suppose that only fd 5 is ready. After select return, the `readfds` become:
+
+```text
+3 → 0
+5 → 1
+7 → 0
+```
+
+The other bits are set to 0, and only bit 5 is 1.
+
 **Maximum Number of Descriptors for select**
 
 When select was originally designed, the OS normally had an upper limit on the maximum number of descriptors per process (the 4.2BSD limit was 31), and select just used this same limit. But, current versions of Unix allow for a virtually unlimited number of descriptors per process (often limited only by the amount of memory and any administrative limits).
@@ -927,3 +945,173 @@ If only two sockets are ready:
 ```
 
 This is part of the reason why select() does not scale well when the number of connections is very large.
+
+**Compare between `select()` and `pselect()`:**
+
+|                                     | `select()`       | `pselect()`       |
+| ----------------------------------- | ---------------- | ----------------- |
+| I/O multiplexing                    | yes              | yes               |
+| `fd_set`                            | yes              | yes               |
+| Timeout                             | `struct timeval` | `struct timespec` |
+| Timeout precision                   | Microsecond      | Nanosecond        |
+| Change signal mask while waiting    | no               | yes               |
+| Resolve signal race                 | no               | yes               |
+
+## poll function
+
+> Like `select()`: `poll()` does not read data. It simply waits and notifies the application which file descriptors (FDs) are ready.
+
+Prototype
+
+```c
+#include <poll.h>
+
+int poll(
+    struct pollfd *fds, /* array of struct pollfd */
+    nfds_t nfds, /* number element of array */
+    int timeout /* time out */
+);
+
+/* On success, poll() returns a nonnegative value which is the number
+   of elements in the pollfds whose revents fields have been set to a
+   nonzero value (indicating an event or an error).  A return value
+   of zero indicates that the system call timed out before any file
+   descriptors became ready.
+
+   On error, -1 is returned, and errno is set to indicate the error. */
+```
+
+Unlike `select()`, `poll()` uses an array of `pollfd` structures.
+
+```c
+struct pollfd {
+    int   fd;
+    short events;
+    short revents;
+};
+```
+
+| Field     | Meaning                                         |
+| --------- | --------------------------------------------    |
+| `fd`      | FD to monitor                                   |
+| `events`  | Events the application wants to monitor         |
+| `revents` | Events the kernel reports as actually occurring |
+
+**Compare select() vs poll()**
+
+|                              | `select()`                    | `poll()`                            |
+| ---------------------------- | ----------------------------- | ----------------------------------- |
+| FD representation            | `fd_set`                      | `pollfd[]`                          |
+| FD limit                     | usually tied to `FD_SETSIZE`  | no `FD_SETSIZE` - style limit       |
+| timeout                      | `timeval`                     | milliseconds                        |
+| `events/revents`             | No                            | Yes                                 |
+| Scanning required            | Yes                           | Yes                                 |
+| Complexity                   | O(n)                          | O(n)                                |
+| Linux large-scale            | more limited                  | better than `select`                |
+| Modern usage                 | legacy/common                 | legacy/common                       |
+| suitable for many connections| Not ideal                     | Not ideal                           |
+
+> Key takeaway:
+>
+> `poll()` improves the interface and eliminates some limitations of `select()`, but it does not fundamentally solve the O(n) scanning problem.
+
+## epoll function
+
+Like other I/O multiplexing system calls, `epoll` (event poll) is used to monitor multiple file descriptors to determine whether they are ready for I/O operations.
+
+But
+
+> On each call to `select()` or `poll()`, the kernel must check all of the specified file descriptors to see if they are ready. When monitoring a large number of file descriptors that are in a densely packed range, the time required for this operation is so much.
+>
+> **-> `epoll` was designed to solve this problem.**
+
+The key advantages of the epoll API include:
+
+- `Epoll` offers significantly better performance scalability than `select()` and `poll()` when monitoring a large number of file descriptors.
+- The `epoll` API supports both level-triggered and edge-triggered notification mechanisms. In contrast, `select()` and `poll()` provide only level-triggered notification. 
+
+**The epoll API consists of three system calls:**
+
+|API||Function|
+|---|---|---|
+|`epoll_create()`||creates an epoll instance and returns a file descriptor referring to the instance|
+|`epoll_ctl()`||manipulates the interest list associated with an epoll instance|
+|`epoll_wait()`||returns items from the ready list associated with an epoll instance|
+
+Workflow:
+
+```text
+                 epoll_create1()
+                       │
+                       ▼
+                ┌─────────────┐
+                │ epoll       │
+                │ instance    │
+                └──────┬──────┘
+                       │
+                  epoll_ctl()
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+        fd 3         fd 4         fd 5
+       EPOLLIN      EPOLLIN      EPOLLOUT
+                       │
+                       │
+                  epoll_wait()
+                       │
+                       ▼
+                  ready events
+```
+
+### epoll_create()
+
+Prototype:
+
+```c
+#include <sys/epoll.h>
+
+int epoll_create(int size);
+int epoll_create1(int flags);
+
+/* On success, these system calls return a file descriptor.
+   On error, -1 is returned, and errno is set to indicate the error. */
+```
+
+The file descriptor returned by `epoll_create` is represent for *epoll instance*. It is not used for I/O. Instead, it is a handle for kernel data structures that serve two purposes:
+
+- recording a list of file descriptors that this process has declared an interest in
+monitoring—***the interest list***;
+- maintaining a list of file descriptors that are ready for I/O—***the ready list***.
+
+### epoll_ctl()
+
+This function is used for resgister, change, delete FD from epoll instance.
+
+Prototype:
+
+```c
+int epoll_ctl(
+    int epfd, /* epoll instance */
+    int op,   /* operation */
+    int fd,   /* fd want to modify */
+    struct epoll_event *event
+);
+```
+
+Some operations:
+
+|op||meaning|
+|---|---|---|
+|EPOLL_CTL_ADD||add fd to epoll|
+|EPOLL_CTL_MOD||modify the event setting for file discriptor|
+|EPOLL_CTL_DEL||remove file discriptor ffrom the interest list for epoll|
+
+The ev argument is a pointer to a structure of type epoll_event, defined as follows:
+
+```c
+struct epoll_event {
+      uint32_t
+      events;
+      epoll_data_t data;
+};
+```

@@ -1,10 +1,11 @@
 /*
 CASE 0 : TCP
 CASE 1 : UDP
-CASE 3 : chat room
+CASE 3 : chat room select
+CASE 4 : chat room poll
 */
 
-#define CASE 3
+#define CASE 4
 
 #if CASE == 0
 
@@ -366,7 +367,6 @@ int main(int argc, char *argv[])
     return 0;
 }
 
-
 #elif CASE == 3
 
 #include <errno.h>
@@ -377,79 +377,95 @@ int main(int argc, char *argv[])
 #include <sys/select.h>
 #include <string.h>
 #include <unistd.h>
+#include <signal.h>
+#include <bits/sigaction.h>
 
-static int send_all(int fd, const char *data, size_t length)
+#define MAX_CLIENTS 100
+
+int listen_fd;
+
+int init_ipv4_socket(const char *ip, const uint16_t port, const int sock_type)
 {
-    size_t sent = 0;
+    struct sockaddr_in addr;
 
-    while (sent < length)
+    /* create socket */
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (listen_fd == -1)
     {
-        ssize_t n = send(fd, data + sent, length - sent, MSG_NOSIGNAL);
-
-        if (n < 0 && errno == EINTR)
-        {
-            continue;
-        }
-        if (n <= 0)
-        {
-            return -1;
-        }
-        sent += (size_t)n;
+        perror("socket");
+        exit(EXIT_FAILURE);
     }
 
-    return 0;
+    printf("socket fd = %d\n", listen_fd);
+
+    /* Prepare IP address */
+    memset(&addr, 0, sizeof(addr));
+
+    addr.sin_family = AF_INET;
+    /* Host byte order -> Network byte order */
+    addr.sin_port = htons(port);
+    /* Presentation IP -> Binary IP */
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1)
+    {
+        perror("inet_pton");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* reuse the address within TIME WAIT */
+    int opt = 1;
+    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+        perror("setsockopt");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Bind socket to ip:port */
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+    {
+        perror("bind");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("bind successful\n");
+    return listen_fd;
+}
+
+void handle(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        close(listen_fd);
+        exit(0);
+        break;
+
+    default:
+        break;
+    }
 }
 
 int main(int argc, char *argv[])
 {
+    struct sigaction sa;
+    sa.sa_handler = handle;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+
     if (argc != 3)
     {
         fprintf(stderr, "Usage: %s <IPv4 address> <port>\n", argv[0]);
         return EXIT_FAILURE;
     }
 
-    char *port_end;
-    errno = 0;
-    unsigned long port = strtoul(argv[2], &port_end, 10);
-    if (errno != 0 || *argv[2] == '\0' || *port_end != '\0' || port > 65535)
-    {
-        fprintf(stderr, "Invalid port: %s\n", argv[2]);
-        return EXIT_FAILURE;
-    }
+    /* create listen socket */
+    listen_fd = init_ipv4_socket(argv[1], (uint16_t)atoi(argv[2]), SOCK_STREAM);
 
-    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (listen_fd < 0)
-    {
-        perror("socket");
-        return EXIT_FAILURE;
-    }
-
-    int reuse_addr = 1;
-    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &reuse_addr,
-                   sizeof(reuse_addr)) < 0)
-    {
-        perror("setsockopt");
-        close(listen_fd);
-        return EXIT_FAILURE;
-    }
-
-    struct sockaddr_in server_addr;
-    memset(&server_addr, 0, sizeof(server_addr));
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons((uint16_t)port);
-    if (inet_pton(AF_INET, argv[1], &server_addr.sin_addr) != 1)
-    {
-        fprintf(stderr, "Invalid IPv4 address: %s\n", argv[1]);
-        close(listen_fd);
-        return EXIT_FAILURE;
-    }
-
-    if (bind(listen_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
-    {
-        perror("bind");
-        close(listen_fd);
-        return EXIT_FAILURE;
-    }
+    /* listen for incoming connections */
     if (listen(listen_fd, SOMAXCONN) < 0)
     {
         perror("listen");
@@ -463,136 +479,273 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    fd_set master_set;
-    FD_ZERO(&master_set);
-    FD_SET(listen_fd, &master_set);
+    /* initialize the fd_set for select */
+    fd_set readfds;
+    FD_ZERO(&readfds);
+    FD_SET(listen_fd, &readfds);
     int max_fd = listen_fd;
-    printf("Chat room listening on %s:%lu\n", argv[1], port);
 
-    for (;;)
+    while (1)
     {
-        fd_set read_set = master_set;
-        int ready = select(max_fd + 1, &read_set, NULL, NULL, NULL);
-
-        if (ready < 0)
+        fd_set temp_fds = readfds; /* copy the fd_set for select */
+        int client_fd = select(max_fd + 1, &temp_fds, NULL, NULL, NULL);
+        if (client_fd < 0)
         {
             if (errno == EINTR)
-            {
-                continue;
-            }
+                continue; /* interrupted by signal, retry */
             perror("select");
             break;
         }
 
-        if (FD_ISSET(listen_fd, &read_set))
+        /* accept and set new client to the fd_set */
+        if (FD_ISSET(listen_fd, &temp_fds))
+        {
+            /* accept new client connection */
+            struct sockaddr_in client_addr;
+            socklen_t client_len = sizeof(client_addr);
+            int new_client = accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
+            if (new_client < 0)
+            {
+                perror("accept");
+                continue;
+            }
+
+            /* add new client socket to the fd_set */
+            FD_SET(new_client, &readfds);
+            if (new_client > max_fd)
+                max_fd = new_client;
+
+            char client_ip[INET_ADDRSTRLEN];
+            inet_ntop(AF_INET, &client_addr.sin_addr, client_ip, sizeof(client_ip));
+            printf("New connection from %s:%d\n", client_ip, ntohs(client_addr.sin_port));
+        }
+
+        /* check for data from existing clients */
+        for (int fd = 0; fd <= max_fd; fd++)
+        {
+            if (fd != listen_fd && FD_ISSET(fd, &temp_fds))
+            {
+                char buffer[1024];
+                ssize_t bytes_read = read(fd, buffer, sizeof(buffer) - 1);
+                if (bytes_read <= 0)
+                {
+                    if (bytes_read == 0)
+                    {
+                        printf("Client on fd %d disconnected\n", fd);
+                    }
+                    else
+                    {
+                        perror("read");
+                    }
+                    close(fd);
+                    FD_CLR(fd, &readfds);
+                }
+                else
+                {
+                    buffer[bytes_read] = '\0';
+                    printf("Received from fd %d: %s\n", fd, buffer);
+                    /* Echo back the received data */
+                    write(fd, buffer, bytes_read);
+                }
+            }
+        }
+    }
+
+    close(listen_fd);
+    return EXIT_FAILURE;
+}
+
+#elif CASE == 4
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <poll.h>
+#include <signal.h>
+#include <bits/sigaction.h>
+
+#define MAX_CLIENTS 100
+
+int listen_fd;
+
+int init_ipv4_socket(const char *ip, const uint16_t port, const int sock_type)
+{
+    struct sockaddr_in addr;
+
+    /* create socket */
+    int listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (listen_fd == -1)
+    {
+        perror("socket");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("socket fd = %d\n", listen_fd);
+
+    /* Prepare IP address */
+    memset(&addr, 0, sizeof(addr));
+
+    addr.sin_family = AF_INET;
+    /* Host byte order -> Network byte order */
+    addr.sin_port = htons(port);
+    /* Presentation IP -> Binary IP */
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1)
+    {
+        perror("inet_pton");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* reuse the address within TIME WAIT */
+    int opt = 1;
+    if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1)
+    {
+        perror("setsockopt");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    /* Bind socket to ip:port */
+    if (bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == -1)
+    {
+        perror("bind");
+        close(listen_fd);
+        exit(EXIT_FAILURE);
+    }
+
+    printf("bind successful\n");
+    return listen_fd;
+}
+
+void handle(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        close(listen_fd);
+        exit(0);
+        break;
+
+    default:
+        break;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    struct sigaction sa;
+    sa.sa_handler = handle;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+
+    if (argc != 3)
+    {
+        fprintf(stderr, "Usage: %s <IPv4 address> <port>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    listen_fd = init_ipv4_socket(argv[1], (uint16_t)atoi(argv[2]), SOCK_STREAM);
+
+    /* listen for incoming connections */
+    if (listen(listen_fd, SOMAXCONN) < 0)
+    {
+        perror("listen");
+        close(listen_fd);
+        return EXIT_FAILURE;
+    }
+    if (listen_fd >= FD_SETSIZE)
+    {
+        fprintf(stderr, "Listening socket exceeds FD_SETSIZE\n");
+        close(listen_fd);
+        return EXIT_FAILURE;
+    }
+
+    /* Initialize pollfd array */
+    struct pollfd fds[MAX_CLIENTS];
+    
+    fds[0].fd = listen_fd;
+    fds[0].events = POLLIN;
+    for (int i = 1; i < MAX_CLIENTS; i++)
+    {
+        fds[i].fd = -1; // Initialize all other fds to -1
+    }
+
+    while (1)
+    {
+        int ret = poll(fds, MAX_CLIENTS, -1);
+        if (ret < 0)
+        {
+            perror("poll");
+            break;
+        }
+
+        /* new connection */
+        if (fds[0].revents & POLLIN)
         {
             struct sockaddr_in client_addr;
             socklen_t client_len = sizeof(client_addr);
-            int client_fd = accept(listen_fd, (struct sockaddr *)&client_addr,
-                                   &client_len);
-
-            if (client_fd < 0)
+            int new_client = accept(listen_fd,
+                                    (struct sockaddr *)&client_addr,
+                                    &client_len);
+            if (new_client < 0)
             {
-                if (errno != EINTR)
-                {
-                    perror("accept");
-                }
-            }
-            else if (client_fd >= FD_SETSIZE)
-            {
-                fprintf(stderr, "Rejecting client: descriptor limit reached\n");
-                close(client_fd);
-            }
-            else
-            {
-                FD_SET(client_fd, &master_set);
-                if (client_fd > max_fd)
-                {
-                    max_fd = client_fd;
-                }
-
-                char client_ip[INET_ADDRSTRLEN];
-                if (inet_ntop(AF_INET, &client_addr.sin_addr, client_ip,
-                              sizeof(client_ip)) == NULL)
-                {
-                    strcpy(client_ip, "unknown");
-                }
-                printf("Client connected: %s:%u (fd=%d)\n", client_ip,
-                       ntohs(client_addr.sin_port), client_fd);
-            }
-
-            if (--ready == 0)
-            {
+                perror("accept");
                 continue;
+            }
+
+            printf("New connection from %s:%d\n",
+                   inet_ntoa(client_addr.sin_addr),
+                   ntohs(client_addr.sin_port));
+
+            /* Add new client to pollfd array */
+            for (int i = 1; i < MAX_CLIENTS; i++)
+            {
+                if (fds[i].fd == -1)
+                {
+                    fds[i].fd = new_client;
+                    fds[i].events = POLLIN;
+                    break;
+                }
             }
         }
 
-        for (int client_fd = 0; client_fd <= max_fd && ready > 0; ++client_fd)
+        /* check for data from existing clients */
+        for (int i = 1; i < MAX_CLIENTS; i++)
         {
-            if (client_fd == listen_fd || !FD_ISSET(client_fd, &master_set) ||
-                !FD_ISSET(client_fd, &read_set))
+            if (fds[i].fd != -1 && fds[i].revents & POLLIN)
             {
-                continue;
-            }
-
-            --ready;
-            char message[1024];
-            ssize_t n = recv(client_fd, message, sizeof(message), 0);
-
-            if (n <= 0)
-            {
-                if (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+                char buffer[1024];
+                ssize_t bytes_read = read(fds[i].fd, buffer, sizeof(buffer) - 1);
+                if (bytes_read <= 0)
                 {
-                    perror("recv");
-                }
-                if (n == 0 || (errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK))
-                {
-                    printf("Client disconnected (fd=%d)\n", client_fd);
-                    close(client_fd);
-                    FD_CLR(client_fd, &master_set);
-                    if (client_fd == max_fd)
+                    if (bytes_read == 0)
                     {
-                        while (max_fd > listen_fd && !FD_ISSET(max_fd, &master_set))
-                        {
-                            --max_fd;
-                        }
+                        printf("Client on fd %d disconnected\n", fds[i].fd);
                     }
-                }
-                continue;
-            }
-
-            for (int peer_fd = 0; peer_fd <= max_fd; ++peer_fd)
-            {
-                if (peer_fd == listen_fd || peer_fd == client_fd ||
-                    !FD_ISSET(peer_fd, &master_set))
-                {
-                    continue;
-                }
-
-                if (send_all(peer_fd, message, (size_t)n) < 0)
-                {
-                    printf("Removing unreachable client (fd=%d)\n", peer_fd);
-                    close(peer_fd);
-                    FD_CLR(peer_fd, &master_set);
-                    if (peer_fd == max_fd)
+                    else
                     {
-                        while (max_fd > listen_fd && !FD_ISSET(max_fd, &master_set))
-                        {
-                            --max_fd;
-                        }
+                        perror("read");
                     }
+                    close(fds[i].fd);
+                    fds[i].fd = -1; /* Remove client from pollfd array */
+                }
+                else
+                {
+                    buffer[bytes_read] = '\0';
+                    printf("Received from fd %d: %s\n", fds[i].fd, buffer);
+                    /* Echo back the received data */
+                    write(fds[i].fd, buffer, bytes_read);
                 }
             }
         }
     }
 
-    for (int fd = 0; fd <= max_fd; ++fd)
-    {
-        if (FD_ISSET(fd, &master_set))
-        {
-            close(fd);
-        }
-    }
-    return EXIT_FAILURE;
+    close(listen_fd);
+    return EXIT_SUCCESS;
 }
 #endif
