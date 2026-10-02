@@ -3,9 +3,10 @@ CASE 0 : TCP
 CASE 1 : UDP
 CASE 3 : chat room select
 CASE 4 : chat room poll
+CASE 5 : daemon poll server
 */
 
-#define CASE 4
+#define CASE 5
 
 #if CASE == 0
 
@@ -746,6 +747,429 @@ int main(int argc, char *argv[])
     }
 
     close(listen_fd);
+    return EXIT_SUCCESS;
+}
+#elif CASE == 5
+
+#define MAX_CLIENTS 100
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/stat.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <syslog.h>
+#include <bits/sigaction.h>
+
+int listen_fd = -1;
+
+static volatile sig_atomic_t stop = 0;
+
+/* SIGNAL */
+static void handle_signal(int sig)
+{
+    if (sig == SIGINT || sig == SIGTERM)
+        stop = 1;
+}
+
+/* DAEMONIZE */
+static void daemonize(void)
+{
+    pid_t pid;
+
+    /* First fork */
+    pid = fork();
+
+    if (pid < 0)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0)
+    {
+        exit(EXIT_SUCCESS);
+    }
+
+    /* Create new session */
+    if (setsid() < 0)
+    {
+        perror("setsid");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Second fork */
+    pid = fork();
+
+    if (pid < 0)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid > 0)
+    {
+        exit(EXIT_SUCCESS);
+    }
+
+    /* Do not retain inherited file creation mask */
+    umask(0);
+
+    /* Do not hold current filesystem */
+    if (chdir("/") < 0)
+    {
+        perror("chdir");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Redirect stdin/stdout/stderr */
+    int fd = open("/dev/null", O_RDWR);
+
+    if (fd < 0)
+    {
+        perror("open /dev/null");
+        exit(EXIT_FAILURE);
+    }
+
+    if (dup2(fd, STDIN_FILENO) < 0 ||
+        dup2(fd, STDOUT_FILENO) < 0 ||
+        dup2(fd, STDERR_FILENO) < 0)
+    {
+        perror("dup2");
+        exit(EXIT_FAILURE);
+    }
+
+    if (fd > STDERR_FILENO)
+        close(fd);
+}
+
+/* SOCKET */
+static int init_ipv4_socket(const char *ip, uint16_t port)
+{
+    struct sockaddr_in addr;
+
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (fd == -1)
+    {
+        syslog(LOG_ERR, "socket: %s", strerror(errno));
+        return -1;
+    }
+
+    int opt = 1;
+
+    if (setsockopt(fd,
+                   SOL_SOCKET,
+                   SO_REUSEADDR,
+                   &opt,
+                   sizeof(opt)) == -1)
+    {
+        syslog(LOG_ERR,
+               "setsockopt(SO_REUSEADDR): %s",
+               strerror(errno));
+
+        close(fd);
+        return -1;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1)
+    {
+        syslog(LOG_ERR,
+               "Invalid IPv4 address: %s",
+               ip);
+
+        close(fd);
+        return -1;
+    }
+
+    if (bind(fd,
+             (struct sockaddr *)&addr,
+             sizeof(addr)) == -1)
+    {
+        syslog(LOG_ERR,
+               "bind: %s",
+               strerror(errno));
+
+        close(fd);
+        return -1;
+    }
+
+    syslog(LOG_INFO,
+           "Socket created and bind successful");
+
+    return fd;
+}
+
+/* MAIN */
+int main(int argc, char *argv[])
+{
+    if (argc != 3)
+    {
+        fprintf(stderr,
+                "Usage: %s <IPv4 address> <port>\n",
+                argv[0]);
+
+        return EXIT_FAILURE;
+    }
+
+    /*
+     * Parse arguments BEFORE daemonizing.
+     *
+     * This is convenient during development because
+     * command-line errors are still visible.
+     */
+    const char *ip = argv[1];
+
+    uint16_t port = (uint16_t)atoi(argv[2]);
+
+    /* DAEMONIZE */
+    daemonize();
+
+    /* LOGGING */
+    openlog("tcp_poll_server",
+            LOG_PID | LOG_NDELAY,
+            LOG_DAEMON);
+
+    /* SIGNAL */
+    struct sigaction sa;
+
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = handle_signal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+
+    sigaction(SIGTERM, &sa, NULL);
+    sigaction(SIGINT, &sa, NULL);
+
+    /*
+     * Prevent TCP write from killing daemon with SIGPIPE.
+     */
+    struct sigaction pipe_sa;
+
+    memset(&pipe_sa, 0, sizeof(pipe_sa));
+    pipe_sa.sa_handler = SIG_IGN;
+    sigemptyset(&pipe_sa.sa_mask);
+    sigaction(SIGPIPE, &pipe_sa, NULL);
+
+    /* SOCKET */
+    listen_fd = init_ipv4_socket(ip, port);
+
+    if (listen_fd < 0)
+    {
+        syslog(LOG_ERR, "Failed to initialize socket");
+        closelog();
+
+        return EXIT_FAILURE;
+    }
+
+    if (listen(listen_fd, SOMAXCONN) < 0)
+    {
+        syslog(LOG_ERR,
+               "listen: %s",
+               strerror(errno));
+
+        close(listen_fd);
+        closelog();
+
+        return EXIT_FAILURE;
+    }
+
+    syslog(LOG_INFO,
+           "TCP server listening on %s:%u",
+           ip,
+           port);
+
+    /* POLL */
+    struct pollfd fds[MAX_CLIENTS];
+
+    memset(fds, 0, sizeof(fds));
+    fds[0].fd = listen_fd;
+    fds[0].events = POLLIN;
+
+    for (int i = 1; i < MAX_CLIENTS; i++)
+        fds[i].fd = -1;
+
+    /* MAIN LOOP */
+    while (!stop)
+    {
+        int ret = poll(fds, MAX_CLIENTS, -1);
+
+        if (ret < 0)
+        {
+            if (errno == EINTR)
+                continue;
+
+            syslog(LOG_ERR,
+                   "poll: %s",
+                   strerror(errno));
+
+            break;
+        }
+
+        /* NEW CONNECTION */
+        if (fds[0].revents & POLLIN)
+        {
+            struct sockaddr_in client_addr;
+
+            socklen_t client_len = sizeof(client_addr);
+
+            int new_client = accept(listen_fd, (struct sockaddr *)&client_addr,
+                                    &client_len);
+
+            if (new_client < 0)
+            {
+                if (errno == EINTR)
+                    continue;
+
+                syslog(LOG_ERR,
+                       "accept: %s",
+                       strerror(errno));
+
+                continue;
+            }
+
+            syslog(LOG_INFO,
+                   "New connection from %s:%d",
+                   inet_ntoa(client_addr.sin_addr),
+                   ntohs(client_addr.sin_port));
+
+            int added = 0;
+
+            for (int i = 1; i < MAX_CLIENTS; i++)
+            {
+                if (fds[i].fd == -1)
+                {
+                    fds[i].fd = new_client;
+                    fds[i].events = POLLIN;
+
+                    added = 1;
+                    break;
+                }
+            }
+
+            if (!added)
+            {
+                syslog(LOG_WARNING,
+                       "Maximum clients reached");
+
+                close(new_client);
+            }
+        }
+
+        /* EXISTING CLIENTS */
+        for (int i = 1; i < MAX_CLIENTS; i++)
+        {
+            if (fds[i].fd == -1)
+                continue;
+
+            /*
+             * Client disconnected / error.
+             */
+            if (fds[i].revents & (POLLHUP | POLLERR | POLLNVAL))
+            {
+                syslog(LOG_INFO,
+                       "Client fd %d disconnected/error",
+                       fds[i].fd);
+
+                close(fds[i].fd);
+
+                fds[i].fd = -1;
+
+                continue;
+            }
+
+            if (fds[i].revents & POLLIN)
+            {
+                char buffer[1024];
+
+                ssize_t bytes_read = read(fds[i].fd, buffer,
+                                          sizeof(buffer) - 1);
+
+                if (bytes_read == 0)
+                {
+                    syslog(LOG_INFO,
+                           "Client fd %d disconnected",
+                           fds[i].fd);
+
+                    close(fds[i].fd);
+
+                    fds[i].fd = -1;
+                }
+                else if (bytes_read < 0)
+                {
+                    if (errno == EINTR)
+                        continue;
+
+                    syslog(LOG_ERR,
+                           "read fd %d: %s",
+                           fds[i].fd,
+                           strerror(errno));
+
+                    close(fds[i].fd);
+
+                    fds[i].fd = -1;
+                }
+                else
+                {
+                    buffer[bytes_read] = '\0';
+
+                    syslog(LOG_INFO,
+                           "Received from fd %d: %s",
+                           fds[i].fd,
+                           buffer);
+
+                    ssize_t written =
+                        write(fds[i].fd,
+                              buffer,
+                              bytes_read);
+
+                    if (written < 0)
+                    {
+                        syslog(LOG_ERR,
+                               "write fd %d: %s",
+                               fds[i].fd,
+                               strerror(errno));
+
+                        close(fds[i].fd);
+
+                        fds[i].fd = -1;
+                    }
+                }
+            }
+        }
+    }
+
+    /* CLEANUP */
+    syslog(LOG_INFO, "Server shutting down");
+
+    for (int i = 1; i < MAX_CLIENTS; i++)
+    {
+        if (fds[i].fd != -1)
+        {
+            close(fds[i].fd);
+            fds[i].fd = -1;
+        }
+    }
+
+    if (listen_fd != -1)
+        close(listen_fd);
+
+    closelog();
+
     return EXIT_SUCCESS;
 }
 #endif

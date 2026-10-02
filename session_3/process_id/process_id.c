@@ -14,7 +14,7 @@ CASE 11 : Daemon
 CASE 12 : race condition
 */
 
-#define CASE 11
+#define CASE 1
 
 #if CASE == 0
 #include <stdio.h>
@@ -33,6 +33,7 @@ int main(void)
 #include <stdio.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <stdlib.h>
 
 int main(void)
 {
@@ -99,11 +100,13 @@ int main(void)
         printf("Parent: child PID = %d\n", pid);
         printf("---------------------------------------------------\n");
         // wait(NULL);
+        exit(0);
     }
     // printf("Hello!\n");
     // printf("%d\n", x);
     // printf("---------------------------------------------------\n");
 
+    getchar();
     return 0;
 }
 #elif CASE == 2
@@ -493,53 +496,74 @@ int main(void)
 
     pid_t pid = fork();
 
-    if (pid < 0)
+    if (pid < 0) /* error */
     {
         perror("fork");
         exit(EXIT_FAILURE);
     }
+    else if (pid == 0) /* Child */
+    {
+        print_id("AFTER FORK");
 
-    if (pid > 0)
+        /* Create a new session */
+        if (setsid() == -1)
+        {
+            perror("setsid");
+            exit(EXIT_FAILURE);
+        }
+
+        print_id("AFTER SETSID");
+
+        /* second fork */
+        pid = fork();
+        if (pid < 0) /* error */
+        {
+            perror("fork");
+            exit(EXIT_FAILURE);
+        }
+        else if (pid == 0) /* child 2 */
+        {
+            print_id("AFTER FORK 2");
+
+            /* unmask file permissions */
+            umask(0);
+
+            /*
+                Daemon normally does not need a working directory
+                tied to the user's current directory.
+            */
+            if (chdir("/") < 0)
+            {
+                perror("chdir");
+                exit(EXIT_FAILURE);
+            }
+
+            /*
+                Close standard file descriptors
+                In this example, I want to see that daemon is still running
+                so I will commnad it.
+            */
+            close(STDIN_FILENO);
+            close(STDOUT_FILENO);
+            close(STDERR_FILENO);
+
+            /* child become daemon and run forever */
+            while (1)
+            {
+                sleep(5);
+            }
+        }
+        else /* child 1 */
+        {
+            /* Parent exits */
+            exit(EXIT_SUCCESS);
+        }
+    }
+    else /* parent */
     {
         /* Parent exits */
         printf("\nParent exits. Parent PID = %d\n", getpid());
         exit(EXIT_SUCCESS);
-    }
-
-    /* Child */
-    print_id("AFTER FORK");
-
-    /* Create a new session */
-    if (setsid() == -1)
-    {
-        perror("setsid");
-        exit(EXIT_FAILURE);
-    }
-
-    print_id("AFTER SETSID");
-
-    /*
-        Daemon normally does not need a working directory
-        tied to the user's current directory.
-    */
-    chdir("/");
-
-    /* 
-        Close standard file descriptors
-        In this example, I want to see that daemon is still running
-        so I will commnad it.
-    */
-    // close(STDIN_FILENO);
-    // close(STDOUT_FILENO);
-    // close(STDERR_FILENO);
-
-    /* child become daemon and run forever */
-    while (1)
-    {
-        sleep(5);
-
-        printf("\nDaemon is still running...\n");
-        print_id("DAEMON");
     }
 
     return 0;
@@ -566,22 +590,22 @@ int main(int argc, char *argv[])
     pid_t pid = fork();
 
     /* error fork */
-    if(pid < 0)
+    if (pid < 0)
     {
         perror("fork");
         exit(-1);
     }
 
-    for(int i = 0; i < 100000; i++)
+    for (int i = 0; i < 100000; i++)
     {
         (*counter)++;
     }
 
-    if(pid > 0)
+    if (pid > 0)
     {
         printf("Final counter = %d\n", *counter);
     }
 
-    return 0;   
+    return 0;
 }
 #endif

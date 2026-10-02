@@ -1,3 +1,835 @@
+# PIPE
+
+> ***A pipe is an IPC (Inter-Process Communication) mechanism that allows one process to transmit a byte stream to another process via the kernel.***
+
+```text
+          Process A                         Process B
+          │                                  │
+          │ write()                          │ read()
+          │                                  │
+          ▼                                  ▲
+          ┌──────────────────────────────────────────┐
+          │                  KERNEL                  │
+          │                                          │
+          │             PIPE BUFFER                  │
+          │                                          │
+          └──────────────────────────────────────────┘
+```
+
+## Why do PIPE exist?
+
+Each process has its own virtual address space:
+
+```text
+Process A                  Process B
+
+┌─────────────┐            ┌─────────────┐
+│ Stack       │            │ Stack       │
+│ Heap        │            │ Heap        │
+│ Data        │            │ Data        │
+│ Code        │            │ Code        │
+└─────────────┘            └─────────────┘
+```
+
+Process A cannot simply go ahead and do:
+
+```c
+B->variable = 100;
+```
+
+because the variable resides in B's address space. It requires an intermediary mechanism. And that is **Pipe**.
+
+**What is the pipe suitable for?**
+
+|suited for|------|not suited for|
+|:---|:---|:---|
+|shell pipelines||complex message structures|
+|parent-child communication||random access|
+|simple producer-consumer scenarios||large shared datasets|
+|passing stdin/stdout||multiple clients requiring flexible communication|
+|data streaming|||
+
+Pipe is primarily suitable for related processes, particularly those linked via `fork()`.
+
+**Library**
+
+```c
+#include <unistd.h>
+```
+
+**Some APIs of Pipe**
+
+|API|---|Effect|Return|
+|:---|:---|:---|:---|
+|`pipe()`||open the pipe|0 if successfull|
+||||-1 if not|
+|`close()`||close the file discription|0 if successfull|
+||||-1 if not|
+|`write()`||write data to pipe|the number of bytes written if success|
+||||-1 if not|
+|`read()`||read data from pipe|the number of bytes read if success|
+||||-1 if not|
+
+**Create pipe**
+
+After Pipe success, two file descriptors are stored in `fd`;  
+
+```text
+fd[0] = read end
+fd[1] = write end
+```
+
+***The output of fd[1] is the input for fd[0].***
+
+![alt text](image.png)
+
+**pipe and fork**
+
+```c
+int fd[2];
+
+pipe(fd);
+
+pid_t pid = fork();
+```
+
+Normally, we use a pipe to allow communication between two processes. To connect two processes using a pipe, we follow the `pipe()` call with a call to `fork()`. During a `fork()`, the child process inherits copies of its parent’s file descriptors, as show below:
+
+![alt text](image-5.png)
+
+Data can travel only one direction through a pipe. If we want to transfer data between parent and child process, we have to use two pipe.
+
+![alt text](image-1.png)
+
+## Pipe has limited capacity
+
+If pipe is full, `write()` can be blocked.
+
+```c
+const char *msg = "HELLO HELLO HELLO HELLO HELLO HELLO";
+while (1)
+{
+    write(fd[1], msg, strlen(msg));
+    printf("write %d time\n", n);
+    n++;
+}
+```
+
+```text
+write 1868 time
+write 1869 time
+write 1870 time
+write 1871 time
+^C
+```
+
+I can write a `msg` string to pipe 1871 times then I can't. Because the default maximum size of pipe is 64Kb, size of `msg` is 35 byte and I write 1871 times, total of size is 65485 byte. It is 64kb.
+
+## Blocking
+
+A different example about the child process does not close the write end, so, instead the parent have done writing but the child still waiting for read. It is **blocking**.
+
+```c
+int main(void)
+{
+    int fd1[2];
+
+    if (pipe(fd1) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    pid_t pid = fork();
+
+    if (pid == -1)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) /* child process */
+    {
+        /* child process does not close the write end
+           child process simply read and can be blocked
+        */
+        // close(fd1[1]);
+        printf("Before read\n");
+        char buffer[100];
+
+        size_t n;
+
+        while ((n = read(fd1[0], buffer, sizeof(buffer) - 1)) > 0)
+        {
+            printf("reading...\n");
+        }
+
+        printf("After read\n");
+
+        buffer[n] = '\0';
+        printf("%lu Child received: %s\n", n, buffer);
+
+        close(fd1[0]);
+    }
+    else /* parent process */
+    {
+        /* parent process close the read end
+           parent process simply write
+        */
+        close(fd1[0]);
+        sleep(5);
+        const char *msg = "Hello from Parent";
+        write(fd1[1], msg, strlen(msg));
+        close(fd1[1]);
+        wait(NULL);
+    }
+    return 0;
+}
+```
+
+```text
+Before read
+reading...
+^C
+```
+
+Why? Because the parent process has already closed both the write and read ends of the pipe, but the child process retains the write end, the kernel perceives that a writer still exists. If the child process attempts to read from the empty pipe, the `read()` function blocks the process, waiting for the writer to provide data; however, the write end is held by the child process itself. This results in the child process hanging indefinitely.
+
+>As we know, *pipe* has a limited capacity, when we write up to limit of pipe, `write()` will block until data has been removed from the pipe by some reading process.
+
+## SIGPIPE
+
+*SIGPIPE* is a signal sent when we writing data to a pipe that has no read end.
+
+Normally, If the process does not handle this signal, the default behavior for `SIGPIPE` is to terminate the process.
+
+If we ignor or create function to handle it. we can see the return value:
+
+Example:
+
+```c
+void signal_handler(int sig)
+{
+    if (sig == SIGPIPE)
+    {
+        printf("write fail with exit signal: SIGPIPE\n");
+    }
+    return;
+}
+
+int main(int argc, char *argv[])
+{
+    signal(SIGPIPE, signal_handler);
+    int fd[2];
+
+    if (pipe(fd) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    close(fd[0]);
+
+    const char *msg = "HELLOOOOO";
+    /*
+    write return the number of byte written
+    return -1 if error
+    */
+    int ret = write(fd[1], msg, strlen(msg));
+    printf("write done with return: %d\n", ret);
+    
+    return 0;
+}
+```
+
+```text
+write fail with exit signal: SIGPIPE
+write done with return: -1
+```
+
+## Deadlock
+
+If we want to establish two-way communication, we must use two pipes.
+But it can lead to deadlock.
+
+Example:
+
+```c
+/* parent write big data and read from child */
+write(fd1[1], big_data, ...);
+read(fd2[0], ...);
+
+/* child write big data and read from parent */
+write(fd2[1], big_data, ...);
+read(fd1[0], ...);
+```
+
+Both parent and child write big data to pipe before read, if it lead to full pipe, both are waiting for the other to read it. This is ***Deadlock in IPC.***
+
+## Using `pipe` for Synchronization
+
+We can use `pipe` as a signal to synchronization process. Parent process will close the write end and `read()` to wait from pipe. Child process will close the read end, then do something (*do not write anything to pipe*). After done, the child process will close its write end. At this time, parent process can run because there are no write end and `read()` function return 0 (no write end).
+
+Example:
+
+```c
+int main(int argc, char *argv[])
+{
+    int p_fd[2];
+
+    printf("parent start\n");
+
+    /* create pipe */
+    if(pipe(p_fd) != 0)
+    {
+        perror("pipe");
+        return -1;
+    }
+
+    switch (fork())
+    {
+    case -1:
+        /* error */
+        perror("fork");
+        return -2;
+        break;
+
+    case 0:
+        /* child close the read end */
+        if(close(p_fd[0]) == -1)
+        {
+            perror("child close");
+            exit(-3);
+        }
+        /* do something */
+        sleep(5);
+
+        printf("child closed the pipe\n");
+
+        /* close the write end */
+        if(close(p_fd[1]) == -1)
+        {
+            perror("child close");
+            exit(-3);
+        }
+
+        exit(12);
+        break;
+    
+    default:
+        break;
+    }
+
+    /* parent close the write end */
+    if(close(p_fd[1]) == -1)
+    {
+        perror("parent close");
+        return -4;
+    }
+
+    char dummy[100];
+
+    /* parent use read to wait for the child */
+    read(p_fd[0], &dummy, 100);
+
+    printf("parent ready to run\n");
+
+    return 0;
+}
+```
+
+```text
+parent start
+child closed the pipe
+parent ready to run
+```
+
+# popen and pclose
+
+If we want to run a command and communicate with it via pipe.
+
+`popen() = process + pipe + open`
+
+`popen` create a pipe, and then fork a child process that exec a shell which turn create a child process to execute command. The mode argument detemine whether the calling process will read from pipe or write to it.
+
+Prototype:
+
+```c
+FILE *popen (const char *command, const char *type)
+/* return:
+file pointer if OK
+NULL if error
+*/
+
+/* type:
+r: the file pointer is connected to the standard output of command
+w: the file pointer is connected to the standard input of command
+*/
+
+int pclose (FILE *stream)
+/* Returns:
+termination status of command
+or −1 on error
+*/
+```
+
+![alt text](image-3.png)  
+Result of `fp = popen(command, "r")`
+
+![alt text](image-2.png)  
+Result of `fp = popen(command, "w")`
+
+Example read from command:
+
+```c
+/* using popen to run command passed via argument *argv[] */
+int main(int argc, char *argv[])
+{
+    FILE *file;
+    /* run command */
+    file = popen("ls -l", "r");
+
+    if(file == NULL)
+    {
+        perror("popen");
+        return -1;
+    }
+
+    char buffer[1024];
+
+    /* print out the result */
+    while((fgets(buffer, sizeof(buffer), file)))
+    {
+        printf("%s", buffer);
+    }
+
+    /* close */
+    pclose(file);
+    return 0;
+}
+```
+
+```text
+document.txt
+image-1.png
+image-2.png
+image-3.png
+image-4.png
+image-5.png
+image.png
+reader
+README.md
+Screenshot from 2026-09-11 15-27-51.png
+test
+test.c
+writer
+```
+
+Example write to command:
+
+```c
+/* using popen to run command passed via argument *argv[] */
+int main(int argc, char *argv[])
+{
+    FILE *file;
+    /* run command */
+    file = popen("grep Hello", "w");
+
+    if (file == NULL)
+    {
+        perror("popen");
+        return -1;
+    }
+
+    fprintf(file, "Hello world!\n");
+    fprintf(file, "This is Linux\n");
+    fprintf(file, "Hello world again!\n");
+
+    /* close */
+    pclose(file);
+    return 0;
+}
+```
+
+```text
+Hello world!
+Hello world again!
+```
+
+# FIFOs
+
+In Linux, FIFO is a IPC called **Named Pipe**
+
+Unlike the normal pipe, FIFO has a name in filesystem.  
+`/tmp/myfifo`  
+and two processes can communicate without having the parent-child relationship.
+
+Prototype:
+
+```c
+#include <sys/stat.h>
+
+int mkfifo (const char *path, __mode_t mode)
+```
+
+The *path* is the name of the FIFO to be create, and the *mode* option is used to specify a permission *mode* in the same way as for the *chmod* command.
+
+Conceptually:
+
+```text
+Filesystem
+    │
+    └── /tmp/myfifo
+             │
+             ▼
+       Kernel FIFO object
+             │
+        ┌────┴────┐
+        ▼         ▼
+      writer     reader
+```
+
+Open FIFO:
+
+```c
+int fd = open("/tmp/myfifo", O_WRONLY); /* writer */
+
+int fd = open("/tmp/myfifo", O_RDONLY); /* reader */
+```
+
+## Block in FIFOs
+
+***Writer, openning the FIFO, will typically block until the reader open the FIFO.***
+
+```text
+Writer
+  │
+  │ open(O_WRONLY)
+  ▼
+BLOCK
+  │
+  │ wait reader
+  │
+  ▼
+Reader appear
+  │
+  ▼
+open() complete
+```
+
+What really happened?
+
+Writer runs to `open` command and wait there because `open` command has not yet returned the result. Then reader call `open`, at this time, the FIFO is enough writer and reader so both can continute.
+
+If we don't want to block when using `open`, we can use:
+
+```c
+open("/tmp/myfifo", O_WRONLY | O_NONBLOCK);
+```
+
+## Example
+
+This example will reproduce communication between 2 processes:  
+The writer:
+
+- write data to fifo named fifo_A_to_B
+- read data from fifo named fifo_B_to_A
+
+The reader:
+
+- read data from fifo named fifo_A_to_B
+- write data to fifo named fifo_B_to_A
+
+Process A is the writer:
+
+```c
+int main(int argc, char *argv[])
+{
+    /* create fifo if it does not exist */
+    mkfifo("/tmp/fifo_A_to_B", 0666);
+
+    char buffer[512];                      /* buffer save data received */
+    const char *msg = "Hello from writer"; /* data to send */
+
+    /* open fifo */
+    int fd = open("/tmp/fifo_A_to_B", O_WRONLY);
+    int fd1 = open("/tmp/fifo_B_to_A", O_RDONLY);
+
+    /* the loop comunication */
+    while (1)
+    {
+        write(fd, msg, strlen(msg));
+
+        int n = read(fd1, buffer, sizeof(buffer) - 1);
+
+        buffer[n] = '\0';
+
+        printf("%s\n", buffer);
+        sleep(1); /* slow */
+    }
+
+    close(fd);
+    close(fd1);
+    return 0;
+}
+```
+
+Process B is the reader
+
+```c
+int main(int argc, char *argv[])
+{
+    /* create fifo if it does not exist */
+    mkfifo("/tmp/fifo_B_to_A", 0666);
+
+    char buffer[512];                      /* buffer save data received */
+    const char *msg = "Hello from reader"; /* data to send */
+
+    /* open fifo */
+    int fd = open("/tmp/fifo_A_to_B", O_RDONLY);
+    int fd1 = open("/tmp/fifo_B_to_A", O_WRONLY);
+
+    /* the loop comunication */
+    while (1)
+    {
+        int n = read(fd, buffer, sizeof(buffer) - 1);
+
+        buffer[n] = '\0';
+
+        printf("%s\n", buffer);
+
+        write(fd1, msg, strlen(msg));
+        sleep(1); /* slow */
+    }
+
+    close(fd);
+    close(fd1);
+    return 0;
+}
+```
+
+|Process A|Process B|
+|:---|:---|
+|Hello from reader|Hello from writer|
+|Hello from reader|Hello from writer|
+|Hello from reader|Hello from writer|
+|Hello from reader|Hello from writer|
+
+# INTRODUCTION TO SYSTEM V IPC
+
+```text
+                 System V
+                     │
+                     ▼
+                 key_t key
+                     │
+           ┌─────────┼─────────┐
+           ▼         ▼         ▼
+        msgget()  semget()  shmget()
+           │         │         │
+           ▼         ▼         ▼
+         msgid     semid     shmid
+```
+
+![alt text](image-6.png)
+
+## Keys and IPC Identifiers
+
+***Key*** is a value used to identify Tthe IPC object that the process wants to create or access.
+
+***IPC ID*** is used to perform after the object is found.
+
+**command to check Message Queue**
+
+```bash
+ipcs -q
+```
+
+IPC keys is an interger number used to determine the object which process wants to access.
+
+Example: `key_t key = 1234;`
+
+**How do we provide a unique key, there are three possibilities:**
+
+- Randomly choose some interger key values, which is typically placed in header file included by all programs using the IPC object. we may accidentally choose a value used by another application.
+- Specify the *IPC_PRIVATE* constant as the key value to the get call when creating the IPC object, which always results in the creation of a new IPC object that is guaranteed to have a unique key.
+- Employ the `ftok()` function to generate a (likely unique) key.
+
+Using either *IPC_PRIVATE* or `ftok()` is the usual technique.
+
+**Create unique key with *IPC_PRIVATE***
+
+```c
+int msgid = msgget(IPC_PRIVATE, 0666);
+```
+
+This technique is especially useful in multiprocess applications where the parent process creates the IPC object prior to performing a fork(), with the result that the child inherits the identifier of the IPC object.
+
+**Create using `ftok()`**
+
+```c
+key_t ftok(const char *pathname, int proj_id);
+```
+
+Return:
+
+- On success, the generated key_t value is returned.
+- On failure -1 is returned.
+
+After we have the key, we can use `msgget(), semget(), shmget()` to gain the IPC ID and use it to access to the object.
+
+## Permission Structure
+
+```c
+/* Data structure used to pass permission information to IPC operations.
+   It follows the kernel ipc64_perm size so the syscall can be made directly
+   without temporary buffer copy.  However, since glibc defines the MODE
+   field as mode_t per POSIX definition (BZ#18231), it omits the __PAD1 field
+   (since glibc does not export mode_t as 16-bit for any architecture).  */
+struct ipc_perm
+{
+   __key_t __key;            /* Key.  */
+   __uid_t uid;              /* Owner's user ID.  */
+   __gid_t gid;              /* Owner's group ID.  */
+   __uid_t cuid;             /* Creator's user ID.  */
+   __gid_t cgid;             /* Creator's group ID.  */
+   __mode_t mode;            /* Read/write permission.  */
+   unsigned short int __seq; /* Sequence number.  */
+   unsigned short int __pad2;
+   __syscall_ulong_t __glibc_reserved1;
+   __syscall_ulong_t __glibc_reserved2;
+};
+```
+
+```text
+Message Queue
+┌──────────────────────────┐
+│ owner UID                │
+│ group GID                │
+│ permission mode          │
+│ creator UID              │
+│ creator GID              │
+│ queue size               │
+│ number of messages       │
+│ timestamps               │
+│ ...                      │
+└──────────────────────────┘
+```
+
+`ipc_perm` is a structure containing information that the kernel uses to manage the ownership and access control of an IPC object.
+
+Example we have:
+
+|Message Queue|
+|:---|
+|UID|
+|GID|
+|mode = 0666|
+
+**What does `0666` actually mean?**
+
+Each number is ​​represent for an object's permission when access to a message queue.
+
+|0|6|6|6|
+|:---|:---|:---|:---|
+|other mode|user|group|others|
+
+```text
+rwx rwx rwx = 111 111 111
+rw- rw- rw- = 110 110 110
+rwx --- --- = 111 000 000
+
+and so on...
+
+rwx = 111 in binary = 7
+rw- = 110 in binary = 6
+r-x = 101 in binary = 5
+r-- = 100 in binary = 4
+```
+
+Where of course, r stands for read and w for write then x means execute.  
+So `6` is read and write.
+
+## Configuration Limits
+
+Since System V IPC objects consume system resources, the kernel places various limits on each class of IPC object in order to prevent resources from being exhausted.
+
+**Some important limitations**
+
+```c
+MSGMAX      /* the maximum size of a message */
+MSGMNB      /* the maximum size of a message queue */
+MSGMNI      /* limits the number message queues
+               that a system/IPC namespace can have */
+```
+
+Similarly, Semaphore and Shared Memory also have limits.
+
+```c
+/* Semaphore */ 
+SEMMSL
+SEMMNS
+SEMOPM
+SEMMNI
+
+/* Shared Memory */
+SHMMAX
+SHMMIN
+SHMALL
+SHMMNI
+```
+
+## Command with IPC
+
+### see all IPC
+
+```bash
+ipcs
+```
+
+```text
+------ Message Queues --------
+key        msqid      owner      perms      used-bytes   messages    
+
+------ Shared Memory Segments --------
+key        shmid      owner      perms      bytes      nattch     status      
+
+------ Semaphore Arrays --------
+key        semid      owner      perms      nsems  
+```
+
+### see limit
+
+```bash
+ipcs -l
+```
+
+```text
+------ Messages Limits --------
+max queues system wide = 32000
+max size of message (bytes) = 8192
+default max size of queue (bytes) = 16384
+
+------ Shared Memory Limits --------
+max number of segments = 4096
+max seg size (kbytes) = 18014398509465599
+max total shared memory (kbytes) = 18446744073709551612
+min seg size (bytes) = 1
+
+------ Semaphore Limits --------
+max number of arrays = 32000
+max semaphores per array = 32000
+max semaphores system wide = 1024000000
+max ops per semop call = 500
+semaphore max value = 32767
+```
+
+### delete Message Queue
+
+```bash
+ipcrm -q <msg_id>
+```
+
 # POSIX Message Queue
 
 **LIBRARY**
@@ -172,34 +1004,34 @@ sev.sigev_notify = SIGEV_NONE;
 ls -l /dev/shm
 ```
 
-| API            | Chức năng                         |
+| API            | Function                          |
 | -------------- | --------------------------------- |
-| `shm_open()`   | Tạo/mở POSIX shared-memory object |
-| `ftruncate()`  | Đặt kích thước object             |
-| `mmap()`       | Map object vào virtual address    |
-| `munmap()`     | Unmap khỏi process                |
-| `close()`      | Đóng file descriptor              |
-| `shm_unlink()` | Xóa tên shared-memory object      |
+| `shm_open()`   | Create/open POSIX shared-memory object |
+| `ftruncate()`  | Set object size                   |
+| `mmap()`       | Map object to virtual address     |
+| `munmap()`     | Unmap from process                |
+| `close()`      | Close file descriptor             |
+| `shm_unlink()` | Remove shared-memory object name  |
 
 Flow:
 
 ```text
-shm_open
-    ↓
-ftruncate
-    ↓
-mmap
-    ↓
-      USE SHARED MEMORY
-    ↓
-munmap
-    ↓
-close
-    ↓
-shm_unlink
+            shm_open
+                ↓
+            ftruncate
+                ↓
+              mmap
+                ↓
+        USE SHARED MEMORY
+                ↓
+              munmap
+                ↓
+              close
+                ↓
+            shm_unlink
 ```
 
-So sánh System V và POSIX
+Comparison of System V and POSIX
 
 ```text
 System V                    POSIX
@@ -235,16 +1067,16 @@ User process
      ▼
    Kernel
      │
-     ├── tìm SHM object
+     ├── find SHM object
      │
-     ├── nếu O_CREAT:
-     │      tạo nếu chưa tồn tại
+     ├── if O_CREAT:
+     │      create if it does not exist
      │
-     ├── kiểm tra permission
+     ├── check permission
      │
-     ├── tạo/open file description
+     ├── create/open file description
      │
-     └── cấp fd
+     └── return fd
      │
      ▼
 User process
@@ -269,29 +1101,27 @@ void *mmap(
 
 ### addr
 
-addr = `NULL` Nghĩa là: Kernel tự chọn virtual address phù hợp.
+addr = `NULL` means the kernel automatically selects a suitable virtual address.
 
 ### flags = MAP_SHARED and flags = MAP_PRIVATE
 
-Đây là 2 flag cực kỳ quan trọng.
-
-Khác biệt cốt lõi:
+These are two extremely important flags. The core difference:
 
 ```text
 MAP_SHARED
     ↓
-Thay đổi của process có thể được nhìn thấy
-bởi các mapping khác của cùng object.
+Changes made by the process are visible
+to other mappings of the same object.
 
 MAP_PRIVATE
     ↓
-Thay đổi của process không được chia sẻ
-theo kiểu đó → copy-on-write.
+Changes made by the process are not shared
+in that way → copy-on-write.
 ```
 
 ***MAP_SHARED***
 
->Modification đối với mapping được chia sẻ với các mapping khác của cùng object.
+> Modifications to a mapping are shared with other mappings of the same object.
 
 ```text
 Process A                    Process B
@@ -311,7 +1141,7 @@ Process A                    Process B
 
 ***MAP_PRIVATE***
 
-Ban đầu:
+Initial:
 
 ```text
 Process A                    Process B
@@ -328,17 +1158,13 @@ Process A                    Process B
           +----------------+
 ```
 
-Cả hai ban đầu đọc: `100`
-
-Nhưng A ghi:
+Both initially read `100`, but A recorded:
 
 ```c
 *ptrA = 200;
 ```
 
-Kernel không muốn A thay đổi page dùng chung theo semantics của MAP_PRIVATE.
-
-Nó thực hiện Copy-on-Write.
+The kernel does not want A to modify the shared page according to MAP_PRIVATE semantics. It performs `Copy-on-Write`.
 
 Before write:
 
@@ -354,7 +1180,7 @@ A ──────┐
 B ──────┘
 ```
 
-Khi A ghi:
+When A write:
 
 ```text
 A ─────────> +---------+
@@ -378,13 +1204,11 @@ mmap(MAP_SHARED | MAP_ANONYMOUS)
        Parent  Child
 ```
 
-### phân biệt virtual memory, physical memory, page fault, và đặc biệt là tại sao mmap() có thể map lớn hơn RAM.
+### Distinguish between virtual memory, physical memory, and page faults, and specifically explain why `mmap()` allows mapping a region larger than the available RAM.
 
-Giả sử máy bạn có:
+Let's assume my computer has `RAM = 8 GB`
 
-RAM = 8 GB
-
-Bạn làm:
+I do:
 
 ```text
 void *p = mmap(
@@ -397,11 +1221,11 @@ void *p = mmap(
 );
 ```
 
-Bạn vừa yêu cầu 4 GB mapping.
+I just requested a 4 GB mapping.
 
->Điều đó không có nghĩa kernel lập tức lấy 4 GB RAM.
+> That does not mean the kernel immediately takes 4 GB of RAM.
 
-Ban đầu có thể hình dung:
+Initially, one can visualize:
 
 ``` text
 Virtual Address Space
@@ -413,17 +1237,15 @@ Virtual Address Space
 
 Physical RAM
 +--------------------------------+
-|       chưa cần 4 GB           |
+|      Not yet necessary 4 GB    |
 +--------------------------------+
 ```
 
->mmap() trước hết thiết lập virtual memory mapping.
+> `mmap()` first establishes a virtual memory mapping.
 
-**Khi nào RAM thực sự được sử dụng?**
+**When is RAM actually used?**
 
-Khi CPU thực sự truy cập vào một page.
-
-CPU truy cập:
+When the CPU actually accesses a page.
 
 ```text
 virtual address
@@ -434,7 +1256,7 @@ virtual address
 +-------------+
       |
       v
-Có physical page chưa?
+Has the physical page been created yet?
       |
    +--+--+
    |     |
@@ -444,7 +1266,7 @@ Có physical page chưa?
    |  PAGE FAULT
    |     |
    |     v
-   |  kernel cấp/map page
+   |  kernel map page
    |     |
    +-----+
       |
@@ -452,79 +1274,77 @@ Có physical page chưa?
 physical RAM
 ```
 
-**"*Page fault*" không nhất thiết là lỗi**
+**A "page fault" is not necessarily an error.**
 
-Tên "page fault" dễ gây hiểu nhầm.
-
-Có 3 loại khái niệm:
+There are three types of concepts:
 
 - **Minor/valid page fault**
 
->Kernel xử lý được.  
-Ví dụ page chưa được map vào physical RAM nhưng mapping hợp lệ.
+> The kernel can handle it.  
+For example, a page that has not yet been mapped to physical RAM but has a valid mapping.
 
 - **Major page fault**
 
->Kernel phải lấy dữ liệu từ backing storage, ví dụ disk/file.
+> The kernel must retrieve data from backing storage, such as a disk or file.
 
 - **Invalid page fault**
 
->Truy cập vùng memory không hợp lệ: `SIGSEGV`
+> Invalid memory access: `SIGSEGV`
 
 ### SIGSEGV vs SIGBUS
 
-Giả sử:
+Suppose :
 
 ```c
 ftruncate(fd, 4096);
 ```
 
-Object chỉ có:
+Object just have:
 
->4096 bytes
+> 4096 bytes
 
-nhưng bạn map:
+but we map:
 
 ```c
 mmap(NULL, 8192, ...);
 ```
 
-Mapping có thể được tạo, nhưng nếu bạn truy cập vùng vượt backing object:
+A mapping can be created, but if you access an area beyond the backing object:
 
 ```c
 ptr[5000] = 'A';
 ```
 
-có thể nhận:
+Maybe receive:
 
->SIGBUS
+> SIGBUS
 
-Điểm này khác với việc đơn giản truy cập một địa chỉ hoàn toàn không thuộc mapping, thường dẫn tới:
+This differs from simply accessing an address that is not part of the mapping at all, which typically results in:
 
 >SIGSEGV
 
 ```text
 SIGSEGV
     ↓
-memory access không hợp lệ
+memory access invalid
     ↓
-ví dụ mapping không tồn tại / permission sai
+e.g., non-existent mapping / incorrect permissions
 ```
 
-Trong khi:
+while:
 
 ```text
 SIGBUS
     ↓
-mapping tồn tại nhưng backing object
-không thể cung cấp dữ liệu tương ứng
+mapping exists but backing object
+Corresponding data cannot be provided
 ```
 
 # POSIX Semaphore
 
-**POSIX semaphore là gì?**
+**What is POSIX semaphore?**
 
->POSIX semaphore là một counter dùng để đồng bộ hóa giữa các thread hoặc process.
+> A POSIX semaphore is a counter used for synchronization between threads or processes.
 
 ```text
              semaphore
@@ -541,9 +1361,7 @@ không thể cung cấp dữ liệu tương ứng
        value--        value++
 ```
 
-**Hai loại POSIX semaphore**
-
-Có hai loại chính:
+**Two types of POSIX semaphores**
 
 ***A. Unnamed semaphore***
 
@@ -566,7 +1384,7 @@ int sem_post(sem_t *sem);
 int sem_getvalue(sem_t *sem, int *sval);
 ```
 
-Tạo trực tiếp trong memory:
+Create directly in memory:
 
 ```c
 sem_t sem;
@@ -574,10 +1392,10 @@ sem_t sem;
 sem_init(&sem, 0, 1);
 ```
 
-Dùng chủ yếu cho:
+Used primarily for:
 
 - thread ↔ thread
-- process ↔ process nếu đặt semaphore trong shared memory
+- process ↔ process, if the semaphore is placed in shared memory
 
 ***B. Named semaphore***
 
@@ -591,13 +1409,13 @@ int sem_close(sem_t *sem);
 int sem_unlink(const char *name);
 ```
 
-Semaphore có tên trong hệ thống:
+Semaphore system name:
 
 ```c
 sem_open("/my_sem", O_CREAT, 0666, 1);
 ```
 
-Các process khác có thể mở cùng semaphore:
+Other processes can open the same semaphore:
 
 ```c
 sem_open("/my_sem", 0);
@@ -615,12 +1433,12 @@ sem_open("/my_sem", 0);
       sem     pshared   value
 ```
 
->pshared = 0: Semaphore được dùng để đồng bộ các thread trong cùng một process.
->pshared != 0: Semaphore có thể được sử dụng để đồng bộ giữa các process.
+> pshared = 0: The semaphore is used to synchronize threads within the same process.
+> pshared != 0: The semaphore can be used for synchronization between processes.
 
 Example with `pshared != 0`:
 
-Semaphore phải được đặt trong một vùng memory mà hai process cùng map đến cùng physical pages.
+The semaphore must be placed in a memory region where both processes map to the same physical pages.
 
 ```c
 sem_t *sem;
@@ -661,15 +1479,15 @@ After `mmap` we have `semaphore` in the shared memory which processes can observ
 
 **Why we see `MAP_ANONYMOUS` and `-1` in the `mmap` function?**
 
-Thông thường, mmap() có thể map một file vào virtual memory, Nhưng MAP_ANONYMOUS thay đổi chuyện này.
-Ta dùng `MAP_ANONYMOUS` nghĩa là:
+Typically, `mmap()` maps a file into virtual memory, but `MAP_ANONYMOUS` changes this behavior.
+Using `MAP_ANONYMOUS` means:
 
->Mapping này không backed bởi một file.
+> The mapping is not backed by any file.
 
-Nó là vùng memory do kernel cung cấp cho process. Vì vậy `fd` không còn có ý nghĩa.
+It is a memory region provided to the process by the kernel; consequently, the `fd` (file descriptor) argument is irrelevant.
 
->Trong ví dụ parent-child này, `MAP_ANONYMOUS | MAP_SHARED` là cách rất tiện để tạo shared memory không cần file, đặc biệt khi các process có quan hệ `fork()`.
->>Nếu bạn muốn hai process độc lập, được khởi động riêng biệt và không có `fork()` chung, thì *anonymous mapping* không phải cách phù hợp để chúng tự tìm thấy cùng vùng memory. Khi đó ta thường dùng POSIX shared memory ***(shm_open + mmap(MAP_SHARED))*** hoặc System V shared memory để hai process cùng mở/attach một vùng shared memory.
+> In this parent-child example, `MAP_ANONYMOUS | MAP_SHARED` is a convenient way to create file-less shared memory, especially for processes related via `fork()`.
+>> However, if you have two independent processes started separately—without a shared `fork()` relationship—an *anonymous mapping* is not a suitable method for them to access the same memory region. In such cases, POSIX shared memory ***(shm_open + mmap(MAP_SHARED))*** or System V shared memory is typically used to allow both processes to open or attach to the same shared memory area.
 
 ### sem_trywait()
 
@@ -685,7 +1503,7 @@ sem_trywait()
     |
     +-- value > 0 → decrement → return 0
     |
-    +-- value == 0 → KHÔNG BLOCK
+    +-- value == 0 → NON BLOCK
                      |
                      +→ return -1
                         errno = EAGAIN
@@ -702,19 +1520,19 @@ int sem_timedwait(
 );
 ```
 
-Nó nằm giữa:
+It lies between:
 
 ```text
 sem_wait()        sem_trywait()
      |                  |
      |                  |
-block vô hạn       không block
+block forever       non block
 
 
-sem_timedwait(): wait trong một khoảng thời gian
+sem_timedwait(): wait for a period of time
 ```
 
->Một điểm rất dễ nhầm: `abs_timeout`, chữ `abs = absolute`. Nó không phải `"wait 5 seconds"` mà là `"wait until CLOCK_REALTIME reaches this timestamp"`
+> A common point of confusion is `abs_timeout`, where `abs` stands for "absolute." It does not mean "wait for 5 seconds," but rather "wait until `CLOCK_REALTIME` reaches this timestamp."
 
 Example:
 
@@ -728,7 +1546,7 @@ ts.tv_sec += 5;
 sem_timedwait(&sem, &ts);
 ```
 
-Nếu semaphore vẫn chưa available sau thời điểm đó thì: `errno == ETIMEDOUT`
+If the semaphore is still not available after that point: `errno == ETIMEDOUT`.
 
 ## Named Semaphore
 
@@ -750,7 +1568,7 @@ sem_t *sem;
 sem = sem_open("/my_sem", O_CREAT, 0666, value);
 ```
 
-`value` chỉ có tác dụng khi tạo mới. Nếu `/my_se`m chưa tồn tại `value = 5`. Nhưng nếu `/my_sem` đã tồn tại thì không reset nó thành 5.
+The `value` parameter only takes effect during creation. If `/my_sem` does not yet exist, it is set to 5; however, if `/my_sem` already exists, it is not reset to 5.
 
 ***Lifecycle:***
 
@@ -772,25 +1590,23 @@ name removed
 
 ## Semaphore trong Producer–Consumer
 
-Đây là use case quan trọng nhất cần nắm.
+Suppose buffer has: `capacity = 5`
 
-Giả sử buffer có: `capacity = 5`
-
-Ta có:
+We have:
 
 ```c
 sem_t empty;
 sem_t full;
 ```
 
-Khởi tạo:
+Init:
 
 ```c
-sem_init(&empty, 0, 5); /* empty = số slot trống */
-sem_init(&full, 0, 0); /* full  = số item hiện có */
+sem_init(&empty, 0, 5); /* empty = number of empty slot */
+sem_init(&full, 0, 0); /* full  = number of current slot */
 ```
 
-Ban đầu:
+Initially:
 
 ```text
 Buffer
@@ -826,11 +1642,11 @@ sem_post(&mutex);
 sem_post(&empty);
 ```
 
-- Nếu buffer đầy: `empty = 0`, producer: `sem_wait(&empty);` → block.
+- If the buffer is full: `empty = 0`, producer calls `sem_wait(&empty);` → blocks.
 
-- Nếu buffer rỗng: `full = 0`, consumer: `sem_wait(&full);` → block.
+- If the buffer is empty: `full = 0`, consumer calls `sem_wait(&full);` → blocks.
 
-Đây chính là logic semaphore mà bạn đã gặp khi học shared memory + semaphore.
+This is the exact semaphore logic you encountered when studying shared memory and semaphores.
 
 # POSIX Signal
 
@@ -1071,7 +1887,7 @@ Send `signal` to the process with PID = pid.
 
 **Compare `kill()` with `raise()`:**
 
-| | `kill()`             | `raise()`                 |
+|                  | `kill()`             | `raise()`                 |
 | ---------------- | -------------------- | ------------------------- |
 | Sent to          | process/group        | the process itself        |
 | Uses PID         | Yes                  | No                        |

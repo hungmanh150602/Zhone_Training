@@ -1,7 +1,7 @@
 /*
 CASE ??? : test
 CASE 0: pipe
-CASE 1 : ful pipe
+CASE 1 : full pipe
 CASE 2 : SIGPIPE
 CASE 3 : use pipe for synchronization
 CASE 4 ; popen (read), pclose
@@ -14,9 +14,10 @@ CASE 10: Shared Memory System V
 CASE 11 : client/server shared memory
 CASE 12 : System V Semaphore
 CASE 13 : Signal
+CASE 14 : implement popen
 */
 
-#define CASE 13
+#define CASE 6
 
 #if CASE == 0
 #include <stdio.h>
@@ -98,12 +99,12 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
-    const char *msg = "HELLO HELLO HELLO HELLO HELLO HELLO";
+    const char *msg = "H";
     while (1)
     {
         write(fd[1], msg, strlen(msg));
-        printf("write %d time\n", n);
         n++;
+        printf("write %d time\n", n);
     }
     return 0;
 }
@@ -142,7 +143,7 @@ int main(int argc, char *argv[])
     return -1 if error
     */
     int ret = write(fd[1], msg, strlen(msg));
-    printf("write done with return: %d\n", ret);
+    printf("write with return: %d\n", ret);
 
     return 0;
 }
@@ -279,6 +280,7 @@ int main(int argc, char *argv[])
 {
     /* create fifo if it does not exist */
     mkfifo("/tmp/fifo_A_to_B", 0666);
+    mkfifo("/tmp/fifo_B_to_A", 0666);
 
     char buffer[512];                      /* buffer save data received */
     const char *msg = "Hello from writer"; /* data to send */
@@ -317,9 +319,6 @@ The reader:
 
 int main(int argc, char *argv[])
 {
-    /* create fifo if it does not exist */
-    mkfifo("/tmp/fifo_B_to_A", 0666);
-
     char buffer[512];                      /* buffer save data received */
     const char *msg = "Hello from reader"; /* data to send */
 
@@ -644,6 +643,160 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+#elif CASE == 14
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/wait.h>
+
+int main(void)
+{
+    int pipefd[2];
+
+    /*
+     * pipefd[0] = read end
+     * pipefd[1] = write end
+     */
+    if (pipe(pipefd) == -1)
+    {
+        perror("pipe");
+        exit(EXIT_FAILURE);
+    }
+
+    /* =========================
+     * Process 1: ls
+     * =========================
+     */
+    pid_t pid1 = fork();
+
+    if (pid1 == -1)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid1 == 0)
+    {
+        /*
+         * ls chỉ ghi vào pipe.
+         * Không cần read end.
+         */
+        close(pipefd[0]);
+
+        /*
+         * stdout của ls:
+         *
+         *       stdout (fd 1)
+         *              |
+         *              v
+         *           pipefd[1]
+         */
+        if (dup2(pipefd[1], STDOUT_FILENO) == -1)
+        {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
+
+        /*
+         * Sau dup2():
+         *
+         * fd 1 ---> pipe write
+         *
+         * Không cần fd pipefd[1] nữa.
+         */
+        close(pipefd[1]);
+
+        char *argv[] = {
+            "ls",
+            NULL
+        };
+
+        execvp(argv[0], argv);
+
+        /*
+         * Chỉ chạy nếu execvp() thất bại.
+         */
+        perror("execvp ls");
+        exit(EXIT_FAILURE);
+    }
+
+    /* =========================
+     * Process 2: grep txt
+     * =========================
+     */
+    pid_t pid2 = fork();
+
+    if (pid2 == -1)
+    {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid2 == 0)
+    {
+        /*
+         * grep chỉ đọc từ pipe.
+         * Không cần write end.
+         */
+        close(pipefd[1]);
+
+        /*
+         * stdin của grep:
+         *
+         *       stdin (fd 0)
+         *              ^
+         *              |
+         *           pipefd[0]
+         */
+        if (dup2(pipefd[0], STDIN_FILENO) == -1)
+        {
+            perror("dup2");
+            exit(EXIT_FAILURE);
+        }
+
+        /*
+         * Sau dup2():
+         *
+         * fd 0 ---> pipe read
+         */
+        close(pipefd[0]);
+
+        char *argv[] = {
+            "grep",
+            "txt",
+            NULL
+        };
+
+        execvp(argv[0], argv);
+
+        /*
+         * Chỉ chạy nếu execvp() thất bại.
+         */
+        perror("execvp grep");
+        exit(EXIT_FAILURE);
+    }
+
+    /* =========================
+     * Parent
+     * =========================
+     */
+
+    /*
+     * Parent không đọc cũng không ghi pipe.
+     *
+     * Cực kỳ quan trọng phải đóng cả hai.
+     */
+    close(pipefd[0]);
+    close(pipefd[1]);
+
+    /*
+     * Chờ ls và grep kết thúc.
+     */
+    waitpid(pid1, NULL, 0);
+    waitpid(pid2, NULL, 0);
+
+    return 0;
+}
 #else
 #include <stdio.h>
 #include <sys/shm.h>
@@ -654,5 +807,3 @@ int main()
     return 0;
 }
 #endif
-
-// 900158380

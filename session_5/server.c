@@ -8,7 +8,7 @@ CASE 5 : Semaphore System v
 CASE 6 : Semapore POSIX
 */
 
-#define CASE 6
+#define CASE 3
 
 #if CASE == 0
 
