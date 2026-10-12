@@ -876,7 +876,7 @@ int select(
 );
 ```
 
-|API||Function|
+|API|-----|Function|
 |----|----|----|
 |void FD_ZERO(fd_set *fdset);||clear all bits in fdset|
 |void FD_SET(int fd, fd_set *fdset);||turn on the bit for fd in fdset|
@@ -903,7 +903,7 @@ The other bits are set to 0, and only bit 5 is 1.
 
 **Maximum Number of Descriptors for select**
 
-When select was originally designed, the OS normally had an upper limit on the maximum number of descriptors per process (the 4.2BSD limit was 31), and select just used this same limit. But, current versions of Unix allow for a virtually unlimited number of descriptors per process (often limited only by the amount of memory and any administrative limits).
+When `select` was originally designed, the OS normally had an upper limit on the maximum number of descriptors per process (the 4.2BSD limit was 31), and `select` just used this same limit. But, current versions of Unix allow for a virtually unlimited number of descriptors per process (often limited only by the amount of memory and any administrative limits).
 
 **`select()` has a problem.**
 
@@ -944,7 +944,7 @@ If only two sockets are ready:
       process
 ```
 
-This is part of the reason why select() does not scale well when the number of connections is very large.
+This is part of the reason why `select()` does not scale well when the number of connections is very large.
 
 **Compare between `select()` and `pselect()`:**
 

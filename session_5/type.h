@@ -1,6 +1,19 @@
 #ifndef TYPE_H
 #define TYPE_H
 
+/*
+ * FIFO
+ */
+
+ #define SERVER_NAME "/tmp/fifo_server"
+
+struct new_client
+{
+    int id;
+    char fifo_name[32];
+    char data[128];
+};
+
 #ifdef SYSTEM_V
 #include <stdio.h>
 #include <sys/msg.h>

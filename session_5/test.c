@@ -17,7 +17,7 @@ CASE 13 : Signal
 CASE 14 : implement popen
 */
 
-#define CASE 6
+#define CASE 8
 
 #if CASE == 0
 #include <stdio.h>
@@ -278,32 +278,44 @@ The writer:
 
 int main(int argc, char *argv[])
 {
-    /* create fifo if it does not exist */
-    mkfifo("/tmp/fifo_A_to_B", 0666);
-    mkfifo("/tmp/fifo_B_to_A", 0666);
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <writer_id>\n", argv[0]);
+        return 1;
+    }
 
-    char buffer[512];                      /* buffer save data received */
-    const char *msg = "Hello from writer"; /* data to send */
+    /* create fifo if it does not exist */
+    mkfifo("/tmp/fifo_fifo", 0666);
 
     /* open fifo */
-    int fd = open("/tmp/fifo_A_to_B", O_WRONLY);
-    int fd1 = open("/tmp/fifo_B_to_A", O_RDONLY);
+    int fd = open("/tmp/fifo_fifo", O_WRONLY);
+    if (fd == -1)
+    {
+        perror("open");
+        return -1;
+    }
+
+    printf("[Writer %s] FIFO opened\n", argv[1]);
+
+    char msg[256] = "Hello from writer"; /* data to send */
+    int len = snprintf(msg, sizeof(msg), "writer %s: send message", argv[1]);
 
     /* the loop comunication */
     while (1)
     {
-        write(fd, msg, strlen(msg));
+        int m = write(fd, msg, len);
+        if (m == -1)
+        {
+            perror("write");
+            break;
+        }
 
-        int n = read(fd1, buffer, sizeof(buffer) - 1);
+        printf("[Writer %s] sent: %s\n", argv[1], msg);
 
-        buffer[n] = '\0';
-
-        printf("%s\n", buffer);
         sleep(1);
     }
 
     close(fd);
-    close(fd1);
     return 0;
 }
 #elif CASE == 7
@@ -319,28 +331,47 @@ The reader:
 
 int main(int argc, char *argv[])
 {
-    char buffer[512];                      /* buffer save data received */
-    const char *msg = "Hello from reader"; /* data to send */
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <reader_id>\n", argv[0]);
+        return 1;
+    }
 
     /* open fifo */
-    int fd = open("/tmp/fifo_A_to_B", O_RDONLY);
-    int fd1 = open("/tmp/fifo_B_to_A", O_WRONLY);
+    int fd = open("/tmp/fifo_fifo", O_RDONLY);
+    if (fd == -1)
+    {
+        perror("open");
+        return -1;
+    }
+
+    printf("[Reader %s] FIFO opened\n", argv[1]);
 
     /* the loop comunication */
     while (1)
     {
+        char buffer[256]; /* buffer save data received */
+
         int n = read(fd, buffer, sizeof(buffer) - 1);
+        if (n == -1)
+        {
+            perror("read");
+            break;
+        }
+        if (n == 0)
+        {
+            printf("[Reader %s] EOF\n", argv[1]);
+            break;
+        }
 
         buffer[n] = '\0';
 
-        printf("%s\n", buffer);
+        printf("[Reader %s] received: %s\n", argv[1], buffer);
 
-        write(fd1, msg, strlen(msg));
         sleep(1);
     }
 
     close(fd);
-    close(fd1);
     return 0;
 }
 #elif CASE == 8
@@ -355,6 +386,8 @@ int main(int argc, char *argv[])
 #define IPC_SET		1		/* Set `ipc_perm' options.  /
 #define IPC_STAT	2		/* Get `ipc_perm' options.  /
 */
+
+#define SYSTEM_V
 
 #include <stdio.h>
 #include <sys/ipc.h>
@@ -539,6 +572,7 @@ int main(void)
     return 0;
 }
 #elif CASE == 11
+
 #elif CASE == 12
 #include "type.h"
 #include <stdio.h>
@@ -629,7 +663,7 @@ int main(int argc, char *argv[])
 
     alarm(5);
 
-    if(pause() == -1)
+    if (pause() == -1)
     {
         printf("interrupted by signal\n");
     }
@@ -677,45 +711,23 @@ int main(void)
 
     if (pid1 == 0)
     {
-        /*
-         * ls chỉ ghi vào pipe.
-         * Không cần read end.
-         */
+        /* only write to pipe */
         close(pipefd[0]);
 
-        /*
-         * stdout của ls:
-         *
-         *       stdout (fd 1)
-         *              |
-         *              v
-         *           pipefd[1]
-         */
         if (dup2(pipefd[1], STDOUT_FILENO) == -1)
         {
             perror("dup2");
             exit(EXIT_FAILURE);
         }
 
-        /*
-         * Sau dup2():
-         *
-         * fd 1 ---> pipe write
-         *
-         * Không cần fd pipefd[1] nữa.
-         */
         close(pipefd[1]);
 
         char *argv[] = {
             "ls",
-            NULL
-        };
+            NULL};
 
         execvp(argv[0], argv);
 
-        /*
-         * Chỉ chạy nếu execvp() thất bại.
-         */
         perror("execvp ls");
         exit(EXIT_FAILURE);
     }
@@ -734,44 +746,24 @@ int main(void)
 
     if (pid2 == 0)
     {
-        /*
-         * grep chỉ đọc từ pipe.
-         * Không cần write end.
-         */
+        /* only read from pipe */
         close(pipefd[1]);
 
-        /*
-         * stdin của grep:
-         *
-         *       stdin (fd 0)
-         *              ^
-         *              |
-         *           pipefd[0]
-         */
         if (dup2(pipefd[0], STDIN_FILENO) == -1)
         {
             perror("dup2");
             exit(EXIT_FAILURE);
         }
 
-        /*
-         * Sau dup2():
-         *
-         * fd 0 ---> pipe read
-         */
         close(pipefd[0]);
 
         char *argv[] = {
             "grep",
             "txt",
-            NULL
-        };
+            NULL};
 
         execvp(argv[0], argv);
 
-        /*
-         * Chỉ chạy nếu execvp() thất bại.
-         */
         perror("execvp grep");
         exit(EXIT_FAILURE);
     }
@@ -782,16 +774,11 @@ int main(void)
      */
 
     /*
-     * Parent không đọc cũng không ghi pipe.
-     *
-     * Cực kỳ quan trọng phải đóng cả hai.
+     * Parent don't read and write to pipe.
      */
     close(pipefd[0]);
     close(pipefd[1]);
 
-    /*
-     * Chờ ls và grep kết thúc.
-     */
     waitpid(pid1, NULL, 0);
     waitpid(pid2, NULL, 0);
 
@@ -800,10 +787,13 @@ int main(void)
 #else
 #include <stdio.h>
 #include <sys/shm.h>
+#include "type.h"
 
 int main()
 {
+    struct new_client client;
 
+    printf("Size of new_client: %zu bytes\n", sizeof(client));
     return 0;
 }
 #endif

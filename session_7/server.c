@@ -668,7 +668,7 @@ int main(int argc, char *argv[])
 
     /* Initialize pollfd array */
     struct pollfd fds[MAX_CLIENTS];
-    
+
     fds[0].fd = listen_fd;
     fds[0].events = POLLIN;
     for (int i = 1; i < MAX_CLIENTS; i++)
@@ -940,9 +940,7 @@ int main(int argc, char *argv[])
     daemonize();
 
     /* LOGGING */
-    openlog("tcp_poll_server",
-            LOG_PID | LOG_NDELAY,
-            LOG_DAEMON);
+    openlog("tcp_poll_server", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
     /* SIGNAL */
     struct sigaction sa;
@@ -978,9 +976,7 @@ int main(int argc, char *argv[])
 
     if (listen(listen_fd, SOMAXCONN) < 0)
     {
-        syslog(LOG_ERR,
-               "listen: %s",
-               strerror(errno));
+        syslog(LOG_ERR, "listen: %s", strerror(errno));
 
         close(listen_fd);
         closelog();
@@ -988,10 +984,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    syslog(LOG_INFO,
-           "TCP server listening on %s:%u",
-           ip,
-           port);
+    syslog(LOG_INFO, "TCP server listening on %s:%u", ip, port);
 
     /* POLL */
     struct pollfd fds[MAX_CLIENTS];
@@ -1013,10 +1006,7 @@ int main(int argc, char *argv[])
             if (errno == EINTR)
                 continue;
 
-            syslog(LOG_ERR,
-                   "poll: %s",
-                   strerror(errno));
-
+            syslog(LOG_ERR, "poll: %s", strerror(errno));
             break;
         }
 
@@ -1024,26 +1014,20 @@ int main(int argc, char *argv[])
         if (fds[0].revents & POLLIN)
         {
             struct sockaddr_in client_addr;
-
             socklen_t client_len = sizeof(client_addr);
 
-            int new_client = accept(listen_fd, (struct sockaddr *)&client_addr,
-                                    &client_len);
+            int new_client = accept(listen_fd, (struct sockaddr *)&client_addr, &client_len);
 
             if (new_client < 0)
             {
                 if (errno == EINTR)
                     continue;
 
-                syslog(LOG_ERR,
-                       "accept: %s",
-                       strerror(errno));
-
+                syslog(LOG_ERR, "accept: %s", strerror(errno));
                 continue;
             }
 
-            syslog(LOG_INFO,
-                   "New connection from %s:%d",
+            syslog(LOG_INFO, "New connection from %s:%d",
                    inet_ntoa(client_addr.sin_addr),
                    ntohs(client_addr.sin_port));
 
@@ -1063,9 +1047,7 @@ int main(int argc, char *argv[])
 
             if (!added)
             {
-                syslog(LOG_WARNING,
-                       "Maximum clients reached");
-
+                syslog(LOG_WARNING, "Maximum clients reached");
                 close(new_client);
             }
         }
@@ -1086,9 +1068,7 @@ int main(int argc, char *argv[])
                        fds[i].fd);
 
                 close(fds[i].fd);
-
                 fds[i].fd = -1;
-
                 continue;
             }
 
@@ -1101,12 +1081,9 @@ int main(int argc, char *argv[])
 
                 if (bytes_read == 0)
                 {
-                    syslog(LOG_INFO,
-                           "Client fd %d disconnected",
-                           fds[i].fd);
+                    syslog(LOG_INFO, "Client fd %d disconnected", fds[i].fd);
 
                     close(fds[i].fd);
-
                     fds[i].fd = -1;
                 }
                 else if (bytes_read < 0)
@@ -1114,38 +1091,27 @@ int main(int argc, char *argv[])
                     if (errno == EINTR)
                         continue;
 
-                    syslog(LOG_ERR,
-                           "read fd %d: %s",
-                           fds[i].fd,
-                           strerror(errno));
+                    syslog(LOG_ERR, "read fd %d: %s", fds[i].fd, strerror(errno));
 
                     close(fds[i].fd);
-
                     fds[i].fd = -1;
                 }
                 else
                 {
                     buffer[bytes_read] = '\0';
 
-                    syslog(LOG_INFO,
-                           "Received from fd %d: %s",
-                           fds[i].fd,
-                           buffer);
+                    syslog(LOG_INFO, "Received from fd %d: %s", fds[i].fd, buffer);
 
-                    ssize_t written =
-                        write(fds[i].fd,
-                              buffer,
-                              bytes_read);
+                    ssize_t written = write(fds[i].fd,
+                                            buffer,
+                                            bytes_read);
 
                     if (written < 0)
                     {
-                        syslog(LOG_ERR,
-                               "write fd %d: %s",
-                               fds[i].fd,
-                               strerror(errno));
+                        syslog(LOG_ERR, "write fd %d: %s",
+                               fds[i].fd, strerror(errno));
 
                         close(fds[i].fd);
-
                         fds[i].fd = -1;
                     }
                 }
@@ -1169,7 +1135,6 @@ int main(int argc, char *argv[])
         close(listen_fd);
 
     closelog();
-
     return EXIT_SUCCESS;
 }
 #endif

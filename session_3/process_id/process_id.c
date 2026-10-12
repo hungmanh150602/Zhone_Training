@@ -14,7 +14,7 @@ CASE 11 : Daemon
 CASE 12 : race condition
 */
 
-#define CASE 1
+#define CASE 11
 
 #if CASE == 0
 #include <stdio.h>
@@ -471,6 +471,10 @@ int main()
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <syslog.h>
+#include <errno.h>
 
 /*
     function print ids of preocess:
@@ -490,80 +494,126 @@ void print_id(const char *name)
     printf("TID  = %ld\n", (long)getpid());
 }
 
+void init_daemon(void)
+{
+    /* create pipe to communicate with daemon */
+    int pipe_fd[2];
+    if (pipe(pipe_fd) == -1)
+    {
+        syslog(LOG_ERR, "pipe failed: %d", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    /* First fork: Detaches the child process from the parent terminal */
+    pid_t pid = fork();
+
+    if (pid < 0)
+    {
+        /* error */
+        syslog(LOG_ERR, "fork failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+    else if (pid > 0)
+    {
+        /* Parent wait daemon success and exits */
+        close(pipe_fd[1]); /* Close write end of pipe */
+        char buffer[1];
+        if (read(pipe_fd[0], buffer, 1) > 0)
+        {
+            printf("\nParent receives success signal. PID = %d\n", getpid());
+        }
+        close(pipe_fd[0]); /* Close read end of pipe */
+        syslog(LOG_INFO, "Parent exits. PID = %d", getpid());
+        _exit(EXIT_SUCCESS);
+    }
+
+    print_id("CHILD 1 AFTER FORK");
+    close(pipe_fd[0]); /* Close read end of pipe in child 1 */
+
+    /* Create a new session and process group (becomes Session Leader) */
+    if (setsid() == -1)
+    {
+        syslog(LOG_ERR, "setsid failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+
+    print_id("CHILD 1 AFTER SETSID");
+
+    /*
+     * Second fork: daemon is no longer a session leader,
+     * so it cannot acquire a controlling terminal.
+     */
+    pid = fork();
+
+    if (pid < 0)
+    {
+        /* error */
+        syslog(LOG_ERR, "fork failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+    else if (pid > 0)
+    {
+        /* child 1 exits */
+        close(pipe_fd[1]); /* Close write end of pipe in child 1 */
+        syslog(LOG_INFO, "Child 1 exits. PID = %d", getpid());
+        _exit(EXIT_SUCCESS);
+    }
+
+    sleep(1); /* Ensure child 1 has exited before proceeding */
+    print_id("CHILD 2 AFTER FORK");
+
+    /* Redirect stdin/stdout/stderr */
+    int fd = open("/dev/null", O_RDWR);
+
+    if (fd < 0)
+    {
+        syslog(LOG_ERR, "open /dev/null failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+
+    if (dup2(fd, STDIN_FILENO) < 0 ||
+        dup2(fd, STDOUT_FILENO) < 0 ||
+        dup2(fd, STDERR_FILENO) < 0)
+    {
+        syslog(LOG_ERR, "dup2 failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+    if (fd > STDERR_FILENO)
+        close(fd);
+
+    /* Unmask file permissions */
+    umask(0);
+
+    /* Change working directory to root to prevent locking mounted filesystems */
+    if (chdir("/") < 0)
+    {
+        syslog(LOG_ERR, "chdir failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+
+    /* Open System Logging */
+    openlog("log_daemon", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+
+    /* Signal success to parent */
+    char success = '1';
+    if (write(pipe_fd[1], &success, 1) != 1)
+    {
+        syslog(LOG_ERR, "write failed: %d", strerror(errno));
+        _exit(EXIT_FAILURE);
+    }
+    close(pipe_fd[1]); /* Close write end of pipe */
+}
+
 int main(void)
 {
     print_id("BEFORE FORK");
 
-    pid_t pid = fork();
+    init_daemon();
 
-    if (pid < 0) /* error */
+    /* child become daemon and run forever */
+    while (1)
     {
-        perror("fork");
-        exit(EXIT_FAILURE);
-    }
-    else if (pid == 0) /* Child */
-    {
-        print_id("AFTER FORK");
-
-        /* Create a new session */
-        if (setsid() == -1)
-        {
-            perror("setsid");
-            exit(EXIT_FAILURE);
-        }
-
-        print_id("AFTER SETSID");
-
-        /* second fork */
-        pid = fork();
-        if (pid < 0) /* error */
-        {
-            perror("fork");
-            exit(EXIT_FAILURE);
-        }
-        else if (pid == 0) /* child 2 */
-        {
-            print_id("AFTER FORK 2");
-
-            /* unmask file permissions */
-            umask(0);
-
-            /*
-                Daemon normally does not need a working directory
-                tied to the user's current directory.
-            */
-            if (chdir("/") < 0)
-            {
-                perror("chdir");
-                exit(EXIT_FAILURE);
-            }
-
-            /*
-                Close standard file descriptors
-                In this example, I want to see that daemon is still running
-                so I will commnad it.
-            */
-            close(STDIN_FILENO);
-            close(STDOUT_FILENO);
-            close(STDERR_FILENO);
-
-            /* child become daemon and run forever */
-            while (1)
-            {
-                sleep(5);
-            }
-        }
-        else /* child 1 */
-        {
-            /* Parent exits */
-            exit(EXIT_SUCCESS);
-        }
-    }
-    else /* parent */
-    {
-        /* Parent exits */
-        printf("\nParent exits. Parent PID = %d\n", getpid());
-        exit(EXIT_SUCCESS);
+        sleep(5);
     }
 
     return 0;

@@ -6,9 +6,10 @@ CASE 3 : FIFOs
 CASE 4 : Shared Memory POSIX
 CASE 5 : Semaphore System v
 CASE 6 : Semapore POSIX
+CASE 7 : FIFO
 */
 
-#define CASE 3
+#define CASE 7
 
 #if CASE == 0
 
@@ -289,6 +290,7 @@ The writer:
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdlib.h>
 
 char buffer[512]; /* buffer save data received */
 char msg[512];    /* data to send */
@@ -314,18 +316,22 @@ function read the message entered via the keyboard then send to client
 */
 void *read_input(void *arg)
 {
+    char msg[256]; /* data to send */
+    int len = snprintf(msg, sizeof(msg), "writer %s: send message", (char *)arg);
+
     /* the loop comunication */
     while (1)
     {
-        /* get input message from keyboard */
-        if (fgets(msg, sizeof(msg), stdin) == NULL)
+        int m = write(fd_send, msg, len);
+        if (m == -1)
         {
-            printf("ERROR: get input from keyboard.\n");
-            return -1;
+            perror("write");
+            break;
         }
-        msg[strcspn(msg, "\n")] = '\0';
 
-        write(fd_send, msg, strlen(msg));
+        printf("[Writer %s] sent: %s\n", (char *)arg, msg);
+
+        sleep(1);
     }
     return NULL;
 }
@@ -348,6 +354,12 @@ void *rev_message(void *arg)
 
 int main(int argc, char *argv[])
 {
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <writer_id>\n", argv[0]);
+        return 1;
+    }
+
     signal(SIGINT, handle);
 
     /* create fifo if it does not exist */
@@ -361,19 +373,19 @@ int main(int argc, char *argv[])
     pthread_t thread1, thread2;
 
     /* create thread */
-    if (pthread_create(&thread1, NULL, read_input, NULL) != 0)
+    if (pthread_create(&thread1, NULL, read_input, argv[1]) != 0)
     {
         printf("Error create thread 1.\n");
         return -1;
     }
 
-    if (pthread_create(&thread2, NULL, rev_message, NULL) != 0)
-    {
-        printf("Error create thread 2.\n");
-        return -1;
-    }
+    // if (pthread_create(&thread2, NULL, rev_message, NULL) != 0)
+    // {
+    //     printf("Error create thread 2.\n");
+    //     return -1;
+    // }
 
-    printf("server started.\n");
+    printf("server %s started.\n", argv[1]);
 
     /* join thread */
     if (pthread_join(thread1, NULL))
@@ -382,11 +394,11 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    if (pthread_join(thread2, NULL))
-    {
-        printf("Error join thread 2.\n");
-        return -1;
-    }
+    // if (pthread_join(thread2, NULL))
+    // {
+    //     printf("Error join thread 2.\n");
+    //     return -1;
+    // }
 
     return 0;
 }
@@ -445,6 +457,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 #elif CASE == 5
+
 #elif CASE == 6
 
 #include <stdio.h>
@@ -547,6 +560,127 @@ int main(void)
     sem_close(mutex);
     sem_unlink("/sem_mutex");
 
+    return 0;
+}
+#elif CASE == 7
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <bits/sigaction.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <stdbool.h>
+#include "type.h"
+
+bool running = true;
+
+/* handle signal */
+void handle(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        /* code */
+        running = false;
+        break;
+
+    default:
+        break;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    /* signal */
+    struct sigaction sa;
+    sa.sa_handler = handle;
+    sa.sa_flags = 0;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGINT, &sa, NULL);
+
+    /* create fifo */
+    mkfifo(SERVER_NAME, 0666);
+
+    /* open fifo */
+    int fd_server = open(SERVER_NAME, O_RDONLY);
+    if (fd_server == -1)
+    {
+        perror("open");
+        return -1;
+    }
+
+    printf("Client connected!\n");
+
+    struct new_client client;
+    size_t len = sizeof(client);
+
+    /* main loop */
+    while (running)
+    {
+        /* read data from client */
+        ssize_t n = read(fd_server, &client, len);
+        if (n <= 0)
+        {
+            if (n == 0)
+            {
+                printf("client closed!\n");
+                sleep(1);
+                continue;
+            }
+            perror("read");
+            break;
+        }
+
+        /* check if all data is read */
+        if (n < len)
+        {
+            printf("read incomplete data: %ld bytes\n", n);
+            ssize_t remaining = len - n;
+            ssize_t offset = n;
+            while (remaining > 0)
+            {
+                ssize_t m = read(fd_server, (char *)&client + offset, remaining);
+                if (m == -1)
+                {
+                    perror("read");
+                    break;
+                }
+                if (m == 0)
+                {
+                    printf("client closed during read!\n");
+                    break;
+                }
+                remaining -= m;
+                offset += m;
+            }
+            n = offset;
+        }
+
+        printf("Received %ld bytes from client %d: %s\n", n, client.id, client.data);
+
+        /* open client fifo */
+        int fd_client = open(client.fifo_name, O_WRONLY);
+        if (fd_client == -1)
+        {
+            perror("open client fifo");
+            continue;
+        }
+
+        /* send data back to client */
+        ssize_t m = write(fd_client, client.data, strlen(client.data));
+        if (m == -1)
+        {
+            perror("write to client fifo");
+        }
+        close(fd_client);
+    }
+
+    close(fd_server);
+    unlink(SERVER_NAME);
+    printf("Server stopped.\n");
     return 0;
 }
 #endif

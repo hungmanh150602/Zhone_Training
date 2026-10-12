@@ -6,9 +6,10 @@ CASE 3 : FIFOs
 CASE 4 : Shared Memory POSIX
 CASE 5 : Semaphore System v
 CASE 6 : Semapore POSIX
+CASE 7 : FIFO
 */
 
-#define CASE 6
+#define CASE 7
 
 #if CASE == 0
 
@@ -219,6 +220,7 @@ The reader:
 #include <string.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdlib.h>
 
 int fd_read;
 int fd_send;
@@ -261,21 +263,38 @@ function receive message sent from client
 */
 void *rev_message(void *arg)
 {
-    char buffer[512]; /* buffer save data received */
+    char buffer[23]; /* buffer save data received */
 
     while (1)
     {
         int n = read(fd_read, buffer, sizeof(buffer) - 1);
+        if (n == -1)
+        {
+            perror("read");
+            break;
+        }
+        if (n == 0)
+        {
+            printf("[Reader %s] EOF\n", (char *)arg);
+            break;
+        }
 
         buffer[n] = '\0';
 
-        printf("%s\n", buffer);
+        printf("[Reader %s] received: %s\n", (char *)arg, buffer);
+        sleep(1);
     }
     return NULL;
 }
 
 int main(int argc, char *argv[])
 {
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <reader_id>\n", argv[0]);
+        return 1;
+    }
+
     signal(SIGINT, handle);
 
     /* open fifo */
@@ -285,26 +304,26 @@ int main(int argc, char *argv[])
     pthread_t thread1, thread2;
 
     /* create thread */
-    if (pthread_create(&thread1, NULL, read_input, NULL) != 0)
-    {
-        printf("Error create thread 1.\n");
-        return -1;
-    }
+    // if (pthread_create(&thread1, NULL, read_input, NULL) != 0)
+    // {
+    //     printf("Error create thread 1.\n");
+    //     return -1;
+    // }
 
-    if (pthread_create(&thread2, NULL, rev_message, NULL) != 0)
+    if (pthread_create(&thread2, NULL, rev_message, argv[1]) != 0)
     {
         printf("Error create thread 2.\n");
         return -1;
     }
 
-    printf("client started.\n");
+    printf("client %s started.\n", argv[1]);
 
     /* join thread */
-    if (pthread_join(thread1, NULL))
-    {
-        printf("Error join thread 1.\n");
-        return -1;
-    }
+    // if (pthread_join(thread1, NULL))
+    // {
+    //     printf("Error join thread 1.\n");
+    //     return -1;
+    // }
 
     if (pthread_join(thread2, NULL))
     {
@@ -359,6 +378,7 @@ int main(int argc, char *argv[])
     return 0;
 }
 #elif CASE == 5
+
 #elif CASE == 6
 
 #include <stdio.h>
@@ -446,4 +466,116 @@ int main(int argc, char *argv[])
 
     return 0;
 }
+#elif CASE == 7
+
+#include <stdio.h>
+#include <fcntl.h>
+#include <string.h>
+#include <signal.h>
+#include <unistd.h>
+#include <stdlib.h>
+#include <bits/sigaction.h>
+#include <stdbool.h>
+#include <sys/stat.h>
+#include "type.h"
+
+bool running = true;
+
+/* handle signal */
+void handle(int sig)
+{
+    switch (sig)
+    {
+    case SIGINT:
+        running = false;
+        break;
+    default:
+        break;
+    }
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc != 2)
+    {
+        fprintf(stderr, "Usage: %s <client_id>\n", argv[0]);
+        return 1;
+    }
+
+    /* signal */
+    struct sigaction sa;
+    sa.sa_handler = handle;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+
+    /* initialize new client */
+    struct new_client new_client = {0};
+    size_t len = sizeof(new_client);
+    /* add client id */
+    new_client.id = atoi(argv[1]);
+    /* add fifo name */
+    snprintf(new_client.fifo_name, sizeof(new_client.fifo_name), "/tmp/fifo_%s", argv[1]);
+    /* add data */
+    snprintf(new_client.data, sizeof(new_client.data), "Hello from Client %d", new_client.id);
+
+    /* create client fifos */
+    mkfifo(new_client.fifo_name, 0666);
+    /* open server fifo */
+    int fd_requests = open(SERVER_NAME, O_WRONLY);
+    if (fd_requests == -1)
+    {
+        perror("open");
+        return -1;
+    }
+
+    printf("Client %d started. Waiting for server response...\n", new_client.id);
+    printf("size of new_client: %zu bytes\n", len);
+
+    /* main loop */
+    while (running)
+    {
+        char buffer[512];
+        /* send request */
+        ssize_t m = write(fd_requests, &new_client, len);
+        if (m == -1)
+        {
+            perror("write");
+            break;
+        }
+
+        printf("[Client %d] sent: %ld byte\n", new_client.id, m);
+
+        /* read data from fifo */
+        int fd_response = open(new_client.fifo_name, O_RDONLY);
+        if (fd_response == -1)
+        {
+            perror("open");
+            break;
+        }
+
+        ssize_t n = read(fd_response, buffer, sizeof(buffer) - 1);
+        if (n == -1)
+        {
+            perror("read");
+            break;
+        }
+        if (n == 0)
+        {
+            printf("EOF\n");
+            continue;
+        }
+
+        buffer[n] = '\0';
+        printf("[Client] received: %s\n", buffer);
+        close(fd_response);
+        sleep(2);
+    }
+
+    close(fd_requests);
+    unlink(new_client.fifo_name);
+    printf("Client %d stopped.\n", new_client.id);
+    return 0;
+}
+
 #endif
