@@ -165,18 +165,81 @@ For example, ***Ubuntu*** is a *Linux distribution*; it utilizes the Linux kerne
 | Execution errors | Usually affects the process | Can affect the entire system |
 | Examples | TCP server, shell, C applications | Scheduler, filesystem code, kernel modules |
 
-# 4. Linux Kernel Components
+# 4. Linux Kernel Architecture
+
+> The Linux kernel is the core of the Linux operating system, responsible for managing hardware resources and providing system services to programs running in user space.
+
+For example, a C program can perform:
+
+```c
+int fd = open("/var/log/app.log", O_RDONLY);
+char buf[1024];
+ssize_t n = read(fd, buf, sizeof(buf));
+close(fd);
+```
+
+The program does not need to directly control the SSD controller, manage page tables, schedule the CPU, or implement a file access permission system.
+
+Instead, it requests the kernel to perform these tasks via system interfaces such as `open()`, `read()`, and `close()`.
+
+A distinction needs to be made here between two concepts:
+
+- **System call**: An interface for a user-space program to request a service from the kernel.
+
+- **Kernel subsystem**: An internal kernel component responsible for performing a specific set of functions.
+
+**The five main subsystems and the role of each component:**
 
 | Subsystem | Responsibility | Examples studied |
 |---|---|---|
 | Process management | Managing processes, threads, and scheduling | `fork()`, `execve()`, `waitpid()` |
 | Memory management | Managing physical and virtual memory | `mmap()`, page fault, shared memory |
-| VFS | Providing a unified file interface | `open()`, `read()`, `write()` |
+| VFS / File System | Providing a unified file interface | `open()`, `read()`, `write()` |
 | Networking | Managing sockets and network protocols | `socket()`, `bind()`, `recv()` |
-| IPC | Supporting inter-process communication | Pipe, FIFO, POSIX message queue |
 | Device drivers | Connecting devices to the kernel | GPIO, UART, I²C, SPI |
-| Scheduler | Deciding which thread executes on the CPU | Switching between execution threads |
 
-# 5. Summary
+These five subsystems do not operate separately. They coordinate to provide complete services for the application.
+
+# 5. Linux Kernel Module
+
+A Linux Kernel Module (LKM) is a piece of code that can be loaded into or unloaded from the Linux kernel while the system is running, provided the kernel and system configuration allow it.
+
+**Why does Linux need kernel modules?**
+
+Imagine if Linux did not support loadable modules. When you wanted to add a driver for a new device, you might have to recompile the kernel and reboot the system to use the new kernel version.
+
+**Key benefits:**
+
+- **Flexibility**: Functions can be added to the kernel while the system is running.
+- **Resource efficiency**: Not all drivers need to be loaded at startup.
+- **Ease of maintenance:** Components can be developed and updated independently of the rest of the kernel.
+- **Broad device support**: Drivers can be loaded when a device is detected or when the system requires them.
+
+## Built-in kernel code vs. Loadable module
+
+Linux supports two ways of incorporating functionality into the kernel.
+
+| Criterion | Built-in | Loadable module |
+|---|---|---|
+| Integration method | Linked into the kernel image during compilation | Loaded into the kernel when needed |
+| Common file(s) | `vmlinux` or compressed kernel image | `.ko` file |
+| Can be loaded separately after boot? | No, because the code is already in the kernel | Yes |
+| Can be removed separately while the system is running? | No | Yes, if safety conditions are met |
+| Initialization | Via the kernel's initialization mechanism | Via the module initialization mechanism |
+| Example | A kernel function configured as `=y` | A driver configured as `=m` |
+
+## Linux Driver
+
+**Concept**
+
+> A device driver is a software component responsible for controlling or managing a specific type of device, providing appropriate operations for use by the kernel and other components.
+
+Drivers can work with:
+
+- **Physical devices**: network cards, disk drives, keyboards, GPUs.
+- **Virtual devices** or **devices** without a corresponding physical hardware component.
+- **Hardware controllers** and **buses** such as PCI, USB, I²C, and SPI.
+
+# Summary
 
 ![alt text](<image/Linux Architecture Layered Infographic.png>)
