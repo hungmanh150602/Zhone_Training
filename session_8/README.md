@@ -1,4 +1,6 @@
-# 1. Operating System: what it is and why it is needed ?
+# 1. Operating System (OS)
+
+**what it is and why it is needed ?**
 
 Suppose you run two programs:
 
@@ -10,6 +12,10 @@ Suppose you run two programs:
 Both require CPU and RAM.
 
 Without an OS management mechanism, each program would have to manage its own CPU usage and resources. Furthermore, there would be no reliable protection mechanism to prevent one program from corrupting another's memory space.
+
+An operating system provides mechanisms for resource management and system protection, and enables programs to utilize hardware through standardized interfaces.
+
+We need to distinguish between the operating system as a complete system and the kernel as its core component.
 
 In Linux, the kernel provides mechanisms to address these issues:
 
@@ -24,9 +30,15 @@ In Linux, the kernel provides mechanisms to address these issues:
 
 ## 1.1 Three core roles of an operating system
 
-### Abstraction
+### Abstraction - Hardware abstraction
 
-Abstraction enables programs to utilize resources through a unified interface without requiring an understanding of the full hardware details.
+Suppose a computer has a storage device. The actual hardware could be an HDD, a SATA SSD, or an NVMe SSD. Each type of device communicates differently.
+
+If every application had to manage each device type itself, software development would be extremely complex.
+
+> Abstraction enables programs to utilize resources through a unified interface without requiring an understanding of the full hardware details.
+>
+> Linux provides a unified file interface.
 
 Example:
 
@@ -47,22 +59,26 @@ The program does not need to perform tasks such as:
 
 Instead, the program utilizes the file descriptor interface and relevant system calls. The kernel coordinates the necessary subsystems to fulfill the request.
 
+![alt text](image/image1.png)
+
+The diagram above represents a generalized model. The **VFS** handles the file interface, the **filesystem** manages data organization, while the **block I/O layers** and **drivers** handle the path to the storage device.
+
 ### Resource Management
 
-A computer has finite resources:
+A computer has limited resources:
 
 - The CPU has a finite number of cores.
 - RAM has a finite capacity.
 - Storage devices have finite speed and processing capabilities.
 - Network bandwidth is limited.
 
-The kernel must manage the use of these resources.
+Without an appropriate management mechanism, programs may compete for resources and affect one another. The OS addresses this issue using mechanisms such as:
 
-The Linux scheduler determines which process executes on the CPU based on scheduling policies and the system state.
+- The Linux scheduler determines which process executes on the CPU based on scheduling policies and the system state.
 
-Regarding RAM, the kernel manages physical memory, supports virtual memory, handles page faults, and coordinates with memory allocation mechanisms.
+- Regarding RAM, the kernel manages physical memory, supports virtual memory, handles page faults, and coordinates with memory allocation mechanisms.
 
-For I/O devices, the kernel provides interfaces and mechanisms that allow authorized processes to access and use the devices.
+- For I/O devices, the kernel provides interfaces and mechanisms that allow authorized processes to access and use the devices.
 
 > The kernel not only provides access to resources but also determines how resources are allocated, protected, and reclaimed.
 
@@ -112,10 +128,11 @@ The same program can run on various Linux systems with different hardware, provi
 
 In common usage, the term "Linux" can refer to either the kernel or a complete Linux system. Technically, it is necessary to distinguish between the two concepts:
 
-- Linux kernel: The core component that manages resources, enforces security mechanisms, and provides interfaces for programs.
-- Linux distribution: A complete system that combines the Linux kernel with libraries, system programs, administration tools, package managers, and other components.
+- **Linux kernel**: The core component that manages resources, enforces security mechanisms, and provides interfaces for programs.
 
-For example, Ubuntu is a Linux distribution; it utilizes the Linux kernel but includes various other components to form a complete operating environment.
+- **Linux distribution**: A complete system that combines the Linux kernel with libraries, system programs, administration tools, package managers, and other components.
+
+For example, ***Ubuntu*** is a *Linux distribution*; it utilizes the Linux kernel but includes various other components to form a complete operating environment.
 
 ## 2.1 Key components
 
@@ -130,7 +147,23 @@ For example, Ubuntu is a Linux distribution; it utilizes the Linux kernel but in
 
 # 3. User space and Kernel space
 
+**User space** is the environment where ordinary applications run. Programs have their own address spaces and are not permitted to arbitrarily access kernel resources or hardware.
+
+**Kernel space** is the execution environment for the kernel. The kernel possesses privileged access to manage memory, processes, devices, and system resources.
+
 ![alt text](image/image.png)
+
+**Compare User Space and Kernel Space:**
+
+| Criterion | User space | Kernel space |
+|---|---|---|
+| Purpose | Running applications | Resource management and system service provision |
+| CPU privilege | Typically user mode | Kernel mode |
+| Memory | Process address space | Kernel address space and kernel-managed regions |
+| System call | Sends service requests | Receives and processes requests |
+| Hardware access | Typically via authorized interfaces | Can use kernel mechanisms to manage hardware |
+| Execution errors | Usually affects the process | Can affect the entire system |
+| Examples | TCP server, shell, C applications | Scheduler, filesystem code, kernel modules |
 
 # 4. Linux Kernel Components
 
@@ -143,3 +176,7 @@ For example, Ubuntu is a Linux distribution; it utilizes the Linux kernel but in
 | IPC | Supporting inter-process communication | Pipe, FIFO, POSIX message queue |
 | Device drivers | Connecting devices to the kernel | GPIO, UART, I²C, SPI |
 | Scheduler | Deciding which thread executes on the CPU | Switching between execution threads |
+
+# 5. Summary
+
+![alt text](<image/Linux Architecture Layered Infographic.png>)
