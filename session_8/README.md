@@ -137,7 +137,7 @@ For example, ***Ubuntu*** is a *Linux distribution*; it utilizes the Linux kerne
 ## 2.1 Key components
 
 | Component | Role |
-|---|---|
+| --- | --- |
 | Bootloader | Boots the system and loads the kernel. |
 | Linux kernel | Manages resources, provides system calls, and coordinates system operations. |
 | System libraries | Provide APIs for applications to access system services; e.g., glibc. |
@@ -156,7 +156,7 @@ For example, ***Ubuntu*** is a *Linux distribution*; it utilizes the Linux kerne
 **Compare User Space and Kernel Space:**
 
 | Criterion | User space | Kernel space |
-|---|---|---|
+| --- | --- | --- |
 | Purpose | Running applications | Resource management and system service provision |
 | CPU privilege | Typically user mode | Kernel mode |
 | Memory | Process address space | Kernel address space and kernel-managed regions |
@@ -191,7 +191,7 @@ A distinction needs to be made here between two concepts:
 **The five main subsystems and the role of each component:**
 
 | Subsystem | Responsibility | Examples studied |
-|---|---|---|
+| --- | --- | --- |
 | Process management | Managing processes, threads, and scheduling | `fork()`, `execve()`, `waitpid()` |
 | Memory management | Managing physical and virtual memory | `mmap()`, page fault, shared memory |
 | VFS / File System | Providing a unified file interface | `open()`, `read()`, `write()` |
@@ -202,7 +202,7 @@ These five subsystems do not operate separately. They coordinate to provide comp
 
 # 5. Linux Kernel Module
 
-A Linux Kernel Module (LKM) is a piece of code that can be loaded into or unloaded from the Linux kernel while the system is running, provided the kernel and system configuration allow it.
+A **Linux Kernel Module (LKM)** is a piece of code that can be loaded into or unloaded from the Linux kernel while the system is running, provided the kernel and system configuration allow it.
 
 **Why does Linux need kernel modules?**
 
@@ -215,12 +215,12 @@ Imagine if Linux did not support loadable modules. When you wanted to add a driv
 - **Ease of maintenance:** Components can be developed and updated independently of the rest of the kernel.
 - **Broad device support**: Drivers can be loaded when a device is detected or when the system requires them.
 
-## Built-in kernel code vs. Loadable module
+## Built-in kernel code and Loadable module
 
 Linux supports two ways of incorporating functionality into the kernel.
 
 | Criterion | Built-in | Loadable module |
-|---|---|---|
+| --- | --- | --- |
 | Integration method | Linked into the kernel image during compilation | Loaded into the kernel when needed |
 | Common file(s) | `vmlinux` or compressed kernel image | `.ko` file |
 | Can be loaded separately after boot? | No, because the code is already in the kernel | Yes |
@@ -239,6 +239,155 @@ Drivers can work with:
 - **Physical devices**: network cards, disk drives, keyboards, GPUs.
 - **Virtual devices** or **devices** without a corresponding physical hardware component.
 - **Hardware controllers** and **buses** such as PCI, USB, I²C, and SPI.
+
+**Distinguishing Between Kernel Modules and Drivers**
+
+| Concept | Meaning |
+| --- | --- |
+| Kernel Module | Mechanism for packaging, loading, and unloading dynamically loadable kernel code |
+| Device Driver | Component that implements device control or management functions |
+| Loadable Driver | Driver implemented as a kernel module |
+| Built-in Driver | Driver compiled directly into the kernel |
+
+## Module lifecycle
+
+![alt text](<image/Linux Kernel Module Lifecycle.png>)
+
+The lifecycle of a Linux Kernel Module (LKM) consists of four main stages, spanning from compilation to removal from the system:
+
+1. **Compilation and Packaging**
+
+- The module's source code is written in C and compiled into a binary file with the `.ko` (kernel object) extension.
+
+- The `.ko` file contains a management data structure (`struct module`) that stores the module's name, state, and function pointers.
+
+1. **Loading into the Kernel (Loading – `insmod` or `modprobe`)**
+
+- Tools used: The `insmod` command (manually loads a specific file) or `modprobe` (automatically resolves and loads dependent modules).
+
+- Execution process:
+  - The kernel loads the module's binary code into kernel space (running at Ring 0—the highest privilege mode).
+
+  - The initialization function specified by the `module_init` macro (e.g., `my_init()`) is automatically called.
+
+- Tasks during this stage: Allocating resources, registering new devices, and hooking into network or file system interfaces. If registration fails midway, the init function must clean up previously allocated resources and return an error code.
+
+1. **Active / Registered**
+
+- The module is integrated into the kernel and operates as part of the Linux kernel.
+
+- It can handle interrupts, service user-space processes, or directly manage hardware.
+
+- Its state and reference count (the number of times the module is currently in use) are tracked by the kernel (observable via the `lsmod` command).
+
+1. **Removal from the Kernel (Unloading – `rmmod`)**
+
+- Tool used: The `rmmod` command. • Condition: Typically, it can only be removed when the reference count reaches zero (i.e., no process or device is currently using it).
+
+- Execution process:
+  - The cleanup function specified by the `module_exit` macro (e.g., `my_exit()`) is invoked.
+
+  - Memory is freed, the device is unregistered, and all resources allocated during the initialization phase are released.
+
+  - The module's memory is reclaimed, and the `.ko` file is removed from the kernel without requiring a system reboot.
+
+### Quickly compare `insmod` | `rmmod` | `modprobe`
+
+| Feature | `insmod` | `rmmod` | `modprobe` |
+| --- | --- | --- | --- |
+| Primary function | Load module | Unload module | Load or unload module |
+| Operation | Load | Unload | Load with dependency handling; can unload |
+| Common parameters | `.ko` file path | Module name | Module name |
+| Dependency handling | No automatic handling | Does not automatically unload all dependencies | Handles dependencies |
+| Best for | Testing newly compiled modules | Unloading a specific module | System module management |
+
+### Module Parameters
+
+**Why are module parameters needed?**
+
+> Suppose you are writing a module that logs messages to the kernel log. You want users to be able to configure the number of times the message is logged without having to modify the source code and recompile.
+>
+> > Module parameters allow you to pass values ​​to the module when it is loaded.
+
+Example:
+
+C code:
+
+```c
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+/* Declare a variable `count`, which has a default value of 3. */
+static int count = 3;
+
+/* Register `count` as a module parameter.
+ * 0444 allows read access but not write access via this sysfs interface. */
+module_param(count, int, 0444);
+
+/* init function */
+static int __init hello_init(void)
+{
+    int i;
+
+    for (i = 0; i < count; i++)
+        pr_info("Hello from kernel: %d\n", i);
+
+    return 0;
+}
+
+/* exit function */
+static void __exit hello_exit(void)
+{
+    pr_info("Hello module removed\n");
+}
+
+module_init(hello_init);
+module_exit(hello_exit);
+```
+
+Command:
+
+```bash
+sudo insmod hello.ko count=5
+
+or
+
+sudo modprobe hello count=5
+```
+
+### Module Dependencies
+
+**What is a dependency?**
+
+> A module can use functionality or symbols provided by another module.
+
+Example:
+
+```text
+       module_A.ko
+            |
+            | use symbol of
+            v
+       module_B.ko
+```
+
+`module_A` depends on `module_B`. If `module_B` provides a function used by `module_A` via the kernel's symbol export mechanism, the kernel must be able to resolve that symbol when loading `module_A`.
+
+Example:
+
+```c
+/* module_B */
+int helper_function(void)
+{
+    return 42;
+}
+
+EXPORT_SYMBOL(helper_function);
+
+/* module_A */
+extern int helper_function(void);
+```
 
 # Summary
 
