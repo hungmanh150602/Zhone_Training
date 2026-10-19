@@ -80,6 +80,12 @@ Nếu có, nạp overlay từ thư mục hiện tại:
 sudo dtoverlay -d "$PWD" gpio-demo-overlay
 ```
 
+Kiểm tra overlay:
+
+```bash
+sudo dtoverlay -l
+```
+
 Lệnh trên giả định file nhị phân mang tên gpio-demo-overlay.dtbo đang nằm trong thư mục hiện tại.
 Sau đó, kiểm tra thông báo kernel:
 

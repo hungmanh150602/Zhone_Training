@@ -6,7 +6,7 @@ CASE 4 : chat room poll
 CASE 5 : daemon poll server
 */
 
-#define CASE 5
+#define CASE 3
 
 #if CASE == 0
 
