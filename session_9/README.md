@@ -55,24 +55,7 @@ cat /etc/hostname
 
 The `cat` program needs to read data from the file `/etc/hostname`:
 
-```text
-1. cat calls open()
-│
-▼
-2. Kernel processes the file-opening request
-│
-▼
-3. cat receives a file descriptor
-│
-▼
-4. cat calls read()
-│
-▼
-5. Kernel returns data to userspace
-│
-▼
-6. cat displays the data
-```
+![alt text](image-1.png)
 
 When using read(), an application does not need to know whether the filesystem retrieves the data from a cache or from a physical storage device.
 
@@ -158,38 +141,7 @@ PID from getpid():  35532
 
 **How does IOCTL work?**
 
-```text
-                 USERSPACE
-        ┌─────────────────────────┐
-        │     C Application      │
-        │                         │
-        │ fd = open("/dev/...")   │
-        │                         │
-        │ ioctl(fd, CMD, &data)   │
-        └────────────┬────────────┘
-                     │
-                     ▼
-        ┌─────────────────────────┐
-        │  ioctl() system call    │
-        └────────────┬────────────┘
-                     │
-                     ▼
-                 KERNEL SPACE
-        ┌─────────────────────────┐
-        │    VFS / Driver Core    │
-        │            │            │
-        │            ▼            │
-        │      Device Driver      │
-        │            │            │
-        │            ▼            │
-        │   process command       │
-        └────────────┬────────────┘
-                     │
-                     ▼
-        ┌─────────────────────────┐
-        │   Hardware / Device     │
-        └─────────────────────────┘
-```
+![alt text](image-2.png)
 
 The process unfolds as follows:
 
@@ -285,40 +237,7 @@ cat /proc/uptime
 
 Still using the example above and we have a workflow:
 
-```text
-Userspace
-+----------------------+
-| cat /proc/uptime     |
-+----------------------+
-           |
-           | open()
-           | read()
-           v
-+----------------------+
-| Linux System Calls   |
-+----------------------+
-           |
-           v
-+----------------------+
-| Kernel VFS           |
-| Virtual File System  |
-+----------------------+
-           |
-           v
-+----------------------+
-| Procfs               |
-| Callback read data   |
-+----------------------+
-           |
-           v
-     return data
-           |
-           v
-         cat
-           |
-           v
-    show in terminal
-```
+![alt text](image-3.png)
 
 ## Distinguishing between Procfs and IOCTL
 
