@@ -109,6 +109,124 @@ Typical characteristics:
 
 # 3. Ready-to-use cross-compiling toolchains vs. building a custom toolchain
 
-**What is a prebuilt toolchain?**
+## What is a prebuilt toolchain?
 
 > A prebuilt toolchain is a collection of tools that someone has already compiled and packaged for you.
+
+Example:
+
+```bash
+sudo apt install gcc-aarch64-linux-gnu
+```
+
+**Advantages**
+
+- Fast to install.
+
+- No need to compile GCC and glibc yourself.
+
+- Suitable for learning and everyday development.
+
+- Often integrates well with the development distribution.
+
+**Disadvantages**
+
+- You have less control over the exact component versions.
+
+- Its default configuration might not match a specialized target.
+
+- You may need to provide a separate target sysroot to build applications against the target's actual libraries.
+
+## What is a custom toolchain?
+
+> A custom toolchain is one you build with explicitly selected configuration options.
+
+For example, you may choose:
+
+| Configuration | Example choice |
+|---|---|
+| Target architecture | AArch64 |
+| Operating system | Linux |
+| C library | glibc |
+| GCC version | A compatible selected release |
+| Binutils version | A compatible selected release |
+| Kernel headers | A suitable Linux UAPI header version |
+| Installation directory | `~/x-tools/` |
+
+**Advantages**
+
+- Greater control over compiler and library versions.
+
+- A configuration that can be saved and reproduced.
+
+- Useful for maintaining a stable embedded development environment.
+
+- Helpful when building for a custom Linux distribution.
+
+**Disadvantages**
+
+- Requires more initial setup.
+
+- Can take substantial time and disk space.
+
+- Version incompatibilities can cause build failures.
+
+- You must understand the target's runtime requirements.
+
+## Comparison
+
+| Criterion | Prebuilt toolchain | Custom toolchain |
+|---|---|---|
+| Setup time | Short | Longer |
+| Component selection | Limited by the package | Explicitly configurable |
+| Learning value | Good for learning cross-compilation | Good for learning toolchain construction |
+| Reproducibility | Depends on package and version management | Can be improved by saving configuration and source versions |
+| Typical use | Application development and quick experiments | Specialized embedded development and controlled build environments |
+
+# 4. Introduction to Crosstool-NG
+
+## 4.1 What is Crosstool-NG?
+
+> Crosstool-NG is a toolchain generator that automates the process of building cross-compilation toolchains.
+
+Without an automated tool, you would need to coordinate the configuration and compilation of multiple components, including GCC, Binutils, the C library, and target development headers.
+
+Crosstool-NG manages much of this process through a configurable build system.
+
+## 4.2 How do we configure Crosstool-NG?
+
+The basic workflow:
+
+```text
+       Development machine
+           Ubuntu x86-64
+                 |
+                 v
+       Install Crosstool-NG
+                 |
+                 v
+       Select a sample config
+                 |
+                 v
+         Configure the target
+                 |
+                 v
+            ct-ng build
+                 |
+                 v
+      Download source components
+                 |
+                 v
+     Build GCC, libc, and Binutils
+                 |
+                 v
+       Install the cross-toolchain
+                 |
+                 v
+       Cross-compile applications
+                 |
+                 v
+         Run them on the Pi
+```
+
+## 4.3 Building a Custom Cross-Compilation Toolchain
