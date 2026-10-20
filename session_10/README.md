@@ -67,4 +67,48 @@ For example, a dynamically linked program might require GLIBC_2.xx symbols. If t
 
 > `musl` is a C library designed around simplicity, standards conformance, and a relatively compact implementation.
 
-## 2.3 uClibc-ng
+Typical characteristics:
+
+- Suitable for many lightweight Linux environments.
+
+- Used by Alpine Linux.
+
+- Provides an alternative to glibc.
+
+- May require adjustments when porting software that depends on glibc-specific behavior or interfaces.
+
+A program built for musl should not be assumed to run on a system that only provides glibc, or vice versa.
+
+> **Best use case**: Embedded systems, minimal Linux distributions, and environments where you control the runtime and want to use musl deliberately.
+
+## 2.3 uClibc
+
+> `uClibc` is a C library aimed at embedded Linux systems.
+
+Typical characteristics:
+
+- Designed with embedded use cases in mind.
+
+- Can be configured to suit particular system requirements.
+
+- May be useful in constrained environments.
+
+- Requires checking application compatibility and the availability of maintained toolchain components.
+
+> **Best use case**: Specialized embedded Linux systems where the developer controls the software stack and has a specific reason to select uClibc.
+
+**Comparison**
+
+| Criterion | glibc | musl | uClibc-ng |
+|---|---|---|---|
+| Typical environment | General-purpose Linux | Lightweight Linux | Embedded Linux |
+| Compatibility with mainstream glibc applications | Native fit for compatible versions | May require porting | May require porting |
+| Suitable for embedded devices | Yes | Yes | Yes |
+| Runtime compatibility across different libc implementations | Not guaranteed | Not guaranteed | Not guaranteed |
+| Recommended for our initial Pi 4 exercise | **Yes** | Not initially | Not initially |
+
+# 3. Ready-to-use cross-compiling toolchains vs. building a custom toolchain
+
+**What is a prebuilt toolchain?**
+
+> A prebuilt toolchain is a collection of tools that someone has already compiled and packaged for you.
