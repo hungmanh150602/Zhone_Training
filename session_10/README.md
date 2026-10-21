@@ -1,6 +1,6 @@
 # 1. Introduction to Cross-Compilation
 
-## What is cross-compilation?
+## 1.1 What is cross-compilation?
 
 > **Cross-compilation** is the process of compiling software on one system to produce executable code for a different target system.
 
@@ -37,7 +37,7 @@ aarch64-linux-gnu-gcc hello.c -o hello_arm64
 
 The compiler runs on Ubuntu, but the resulting executable targets AArch64 Linux.
 
-## How does cross-compilation work?
+## 1.2 How does cross-compilation work?
 
 **Three terms to remember**
 
@@ -79,7 +79,7 @@ Example when we config `crosstool-ng`:
 
 > This one is called a “Canadian Cross”¹ toolchain, and is tricky. The three machines in play are different. You might want such a toolchain if you have a fast build machine, but the users will use it on another machine, and will produce code to run on a third machine.
 
-**What’s inside a cross-toolchain?**
+## 1.3 What’s inside a Cross-Compilation toolchain?
 
 > A toolchain is a collection of programs, libraries, headers, and supporting files used to transform source code into an executable for a particular target.
 
@@ -95,6 +95,49 @@ A typical C cross-compilation toolchain contains the following components.
 | GDB | Debugs programs | `aarch64-linux-gnu-gdb` |
 
 **What does the GCC do?**
+
+> GCC generates code for the target architecture even though GCC itself executes on your x86-64 Ubuntu machine.
+
+**GNU Binutils — assembler, linker, and binary utilities**
+
+> GNU Binutils supplies tools used to construct and inspect executable files.
+
+Important components include:
+
+| Tool | Purpose |
+|---|---|
+| `as` | Assembles target assembly code |
+| `ld` | Links object files and libraries |
+| `ar` | Creates and manages static archives |
+| `nm` | Lists symbols in object files and executables |
+| `objdump` | Disassembles and examines binary files |
+| `readelf` | Inspects ELF executable metadata |
+
+Example:
+
+```bash
+aarch64-linux-gnu-as
+aarch64-linux-gnu-ld
+aarch64-linux-gnu-ar
+aarch64-linux-gnu-nm
+aarch64-linux-gnu-objdump
+aarch64-linux-gnu-readelf
+```
+
+**What is a sysroot?**
+
+> A sysroot is a directory which is considered to be the root directory for the purpose of locating headers and libraries.
+
+Suppose your application uses a function declared in a target header and implemented by the target C library.
+
+The compilation process needs both:
+
+1. The appropriate header declaration.
+2. The appropriate library implementation at link time.
+
+If the compiler uses host headers or the linker selects incompatible libraries, the build might fail or produce an executable that cannot run correctly on the target.
+
+When building your own toolchain with Crosstool-NG, we'll configure the target system and its libraries so the compiler has a consistent environment.
 
 # 2. Three main choices for the C library
 
