@@ -15,7 +15,7 @@ Example we want to build a program on our laptop and run it on Raspberry Pi. Con
 
 **Native compilation**
 
-> Native compilation means compiling software for the system on which the resulting program is intended to run
+> Native compilation means compiling software for the system on which you're working.
 
 Example:
 
@@ -39,7 +39,62 @@ The compiler runs on Ubuntu, but the resulting executable targets AArch64 Linux.
 
 ## How does cross-compilation work?
 
+**Three terms to remember**
+
+GCC and build systems use the terms build, host, and target. Their meanings depend on which software you're building.
+
+| Term | Meaning | Example |
+|---|---|---|
+| Build | The system that performs the build process | Ubuntu x86-64 |
+| Host | The system that runs the program that has been built (where GCC will run) | Raspberry Pi |
+| Target | The system for which the tool is designed to generate code (where the program compiled by GCC will run) | ARM64 (in a typical scenario) |
+
+Example when we config `crosstool-ng`:
+
+```text
+[EXTRA]  Dumping internal crosstool-NG configuration
+[EXTRA]    Building a toolchain for:
+[EXTRA]      build  = x86_64-pc-linux-gnu
+[EXTRA]      host   = x86_64-pc-linux-gnu
+[EXTRA]      target = aarch64-unknown-linux-gnu
+```
+
 ![alt text](image.png)
+
+**There are four cases of build-host-target:**
+
+1. *build == host == target (“native”)*
+
+> This is a plain native toolchain, targeting the exact same machine as the one it is built on, and running again on this exact same machine. 
+
+2. *build == host != target (“cross”)*
+
+> This is a classic cross-toolchain, which is expected to be run on the same machine it is compiled on, and generate code to run on a second machine, the target.
+
+3. *build != host == target (“cross-native”)*
+
+> Such a toolchain is also a native toolchain, as it targets the same machine as it runs on. But it is build on another machine.
+
+4. *build != host != target (“canadian”)*
+
+> This one is called a “Canadian Cross”¹ toolchain, and is tricky. The three machines in play are different. You might want such a toolchain if you have a fast build machine, but the users will use it on another machine, and will produce code to run on a third machine.
+
+**What’s inside a cross-toolchain?**
+
+> A toolchain is a collection of programs, libraries, headers, and supporting files used to transform source code into an executable for a particular target.
+
+A typical C cross-compilation toolchain contains the following components.
+
+| Component | Function | Example |
+|---|---|---|
+| GCC | Compiles C/C++ code into machine code | `aarch64-linux-gnu-gcc` |
+| Binutils | Handles object files, libraries, and executables | `as`, `ld`, `ar`, `objdump` |
+| C library | Provides standard functions and a userspace interface to Linux | glibc, musl |
+| Linux kernel headers | Provide definitions required to build userspace software that interacts with the kernel | UAPI headers |
+| Sysroot | A directory tree containing headers and libraries for the target | `sysroot/usr/include`, `sysroot/usr/lib` |
+| GDB | Debugs programs | `aarch64-linux-gnu-gdb` |
+
+**What does the GCC do?**
 
 # 2. Three main choices for the C library
 
@@ -230,3 +285,18 @@ The basic workflow:
 ```
 
 ## 4.3 Building a Custom Cross-Compilation Toolchain
+
+# Reference materials
+
+Read these in order:
+
+1. Crosstool-NG: Introduction — Why toolchains exist and what they contain.  
+<https://crosstool-ng.github.io/docs/introduction/?utm_source=chatgpt.com>
+2. Crosstool-NG: Toolchain Types — Build, host, target, and different toolchain configurations.  
+<https://crosstool-ng.github.io/docs/toolchain-types/?utm_source=chatgpt.com>
+3. GCC: Configuration Terminology — How GCC defines build, host, and target.  
+<https://gcc.gnu.org/onlinedocs/gcc-7.1.0/gccint/Configure-Terms.html?utm_source=chatgpt.com>
+4. Crosstool-NG: Configuration — How to customize a toolchain.  
+<https://crosstool-ng.github.io/docs/configuration/?utm_source=chatgpt.com>
+5. Crosstool-NG: Building the Toolchain — How the configured toolchain is built.  
+<https://crosstool-ng.github.io/docs/configuration/?utm_source=chatgpt.com>
