@@ -124,3 +124,10 @@ The environment can be stored persistently in a configured storage location, or 
 **Important**: `setenv` usually changes the in-memory environment. `saveenv` requests persistent storage, but it works only when persistent environment support is configured.
 
 ## U-Boot boot scripts
+
+> The `bootscript` is an script that is automatically executed when the boot loader starts, and before
+the OS auto boot process.
+
+The bootscript allows the user to execute a set of predefined U-Boot commands automatically before proceeding with normal OS boot.
+
+## How does U-Boot boot Linux?
