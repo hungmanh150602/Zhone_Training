@@ -46,7 +46,7 @@ GCC and build systems use the terms build, host, and target. Their meanings depe
 | Term | Meaning | Example |
 |---|---|---|
 | Build | The system that performs the build process | Ubuntu x86-64 |
-| Host | The system that runs the program that has been built (where GCC will run) | Raspberry Pi |
+| Host | The system that runs the program that has been built (where GCC will run) | Ubuntu x86-64 |
 | Target | The system for which the tool is designed to generate code (where the program compiled by GCC will run) | ARM64 (in a typical scenario) |
 
 Example when we config `crosstool-ng`:
