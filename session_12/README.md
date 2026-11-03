@@ -103,6 +103,8 @@ Common network topologies include:
 
 ![alt text](image.png)
 
+> This topology is cost-effective and easy to implement, but it has limitations, such as a single point of failure; if the backbone fails, the entire network goes down. Bus networks are also less secure due to the shared backbone. Additionally, as more nodes share a central cable, the risk of data collisions increases, reducing network efficiency and potentially causing network slowdowns.
+
 ## Ring topology
 
 > In a ring topology, nodes are connected in a loop, so each device has exactly two neighbors.
@@ -111,9 +113,23 @@ Common network topologies include:
 
 ![alt text](image-1.png)
 
+> Data flows in one direction around the ring, though dual-ring systems can send data in both directions. These networks are generally cheap to install and expand and data flows quickly within the network.
+>
+> The main vulnerability of ring networks is that a failure of a single node can bring down the whole network.
+>> Dual-ring networks are used to protect against this type of failure.  
+>> A dual-ring network features two concentric rings instead of one.
+
+![alt text](image-6.png)
+
+> - The Primary Ring used to transmit data during normal operation.
+> - The Secondary Ring functions as a backup path (typically running in the opposite direction to the Primary Ring).
+> - Failover: In the event of a failure in a cable or network node on the Primary Ring, the system automatically connects the primary and secondary rings at the point of failure to form a new, single ring, ensure that the data flow remains uninterrupted.
+
 ## Star topology
 
 > Star network topologies feature a single, central hub through which all nodes are indirectly connected.
+>
+> If a single node fails, the rest of the network is unaffected, as long as the central hub is operational.
 
 ![alt text](image-2.png)
 
@@ -139,6 +155,12 @@ Common network topologies include:
 | Mesh | Nodes have multiple interconnections | High reliability, multiple redundant paths | High cost and complexity |
 
 # Network communication protocols (TCP/IP)
+
+> Communication between server and client requires interaction between many protocols. The interaction between the different protocols on a device can be illustrated as a protocol stack.
+
+![alt text](image-7.png)
+
+> The separation of functions enables each layer in the stack to operate independently of others.
 
 ![alt text](image-5.png)
 
