@@ -1,0 +1,309 @@
+#========================================================================================#
+#-------------------------------------ROS2 command---------------------------------------#
+#========================================================================================#
+
+#-------------------------------- build ----------------------------------------
+colcon build --symlink-install
+#------------------------ Build ROS2 bằng ít luồng hơn ------------------------
+colcon build --parallel-workers 2
+
+#---------------------------- build package chỉ định ------------------------------
+colcon build --packages-select my_robot_controller
+
+#---------------------------------------- source ----------------------------------------
+source install/setup.bash
+
+#----------------------- chạy node điều khiển robot go_to_goal.py ------------------
+ros2 run my_robot_controller go_to_goal
+
+#------------------------- kiểm tra topic ----------------------------------------
+ros2 topic list
+
+#------------------------ chạy điều khiển robot từ bàn phím -----------------------
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+
+#------------ chạy mô phỏng trên gazebo, rviz (package my_first_pkg) ------------
+ros2 launch my_first_pkg gazebo.launch.py
+ros2 launch my_first_pkg díplay.launch.py
+
+#------------------ tạo 1 package python mới trong ros2_ws (my_robot_controller) ---------------
+cd ~/ros2_ws/src
+ros2 pkg create --build-type ament_python my_robot_controller
+
+#---------------------------------------- tạo file .py ----------------------------------------
+touch ~/ros2_ws/src/my_robot_controller/my_robot_controller/go_to_goal.py
+
+#---------------------------- thêm quyền để chạy ----------------------------------------
+chmod +x ~/ros2_ws/src/my_robot_controller/my_robot_controller/go_to_goal.py
+chmod +x ~/ros2_ws/src/my_first_pkg/scripts/*.py
+
+#---------------------------------------- mở rviz2 ----------------------------------------
+rviz2
+
+#---------------------- tạo thư mục chứa file sdf vật cản ------------------------
+mkdir -p /home/hungubuntu/ros2_ws/src/my_first_pkg/models/obstacle_box
+nano /home/hungubuntu/ros2_ws/src/my_first_pkg/models/obstacle_box/model.sdf
+nano /home/hungubuntu/ros2_ws/src/my_first_pkg/models/obstacle_box/model.config
+
+#------------------------- chạy file tạo map ----------------------------------------
+cd ~/ros2_ws/src/my_first_pkg/maps
+python3 generate_map.py
+
+#------------------------- Xóa toàn bộ file build cũ ----------------------------------------
+cd ~/ros2_ws
+rm -rf build/ install/ log/
+colcon build --symlink-install
+
+#------------------------ kiểm tra /scan lidar ----------------------------------------
+ros2 topic echo /scan
+
+#------------------------ kiểm tra thông tin /scan ----------------------------------------
+ros2 topic info /scan
+
+#------------------------ reset communication ----------------------------------------
+echo -e "QT\n" > /dev/ttyACM0
+
+#--------------------- chuyển TF từ base_link sang laser ------------------------------
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 base_link laser
+
+#--------------------- xem tf tree ------------------------------
+ros2 run tf2_tools view_frames
+ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 odom base_footprint
+
+
+#========================================================================================#
+#-----------------------------------End ROS2 command-------------------------------------#
+#========================================================================================#
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#========================================================================================#
+#------------------------------------Linux command---------------------------------------#
+#========================================================================================#
+
+1. Kiểm tra socket / network
+
+Command				Ý nghĩa					Ví dụ
+ss			Xem socket hiện tại			ss -tuln
+ss -t			TCP sockets				ss -t
+ss -u			UDP sockets				ss -u
+ss -l			Listening sockets			ss -l
+ss -n			Không resolve DNS/service name		ss -tn
+ss -p			Hiện process sử dụng socket		ss -tulpn
+ss -tan			Tất cả TCP connection, numeric		ss -tan
+ss -uan			Tất cả UDP socket, numeric		ss -uan
+lsof -i			Process nào đang dùng network		sudo lsof -i
+lsof -i :8080		Process dùng port 8080			sudo lsof -i :8080
+
+
+2. Kiểm tra IP / interface / routing
+Command				Ý nghĩa					Ví dụ
+ip addr			Xem IP/interface			ip addr
+ip link			Xem network interface			ip link
+ip route		Xem routing table			ip route
+ip neigh		Xem ARP/neighbor table			ip neigh
+hostname -I		Xem IP máy				hostname -I
+ping			Kiểm tra ICMP reachability		ping 192.168.1.10
+traceroute		Xem đường đi qua các router		traceroute 8.8.8.8
+
+
+3. Debug TCP/UDP bằng command line
+
+Command				Ý nghĩa					Ví dụ
+nc / netcat		TCP/UDP client/server đơn giản		nc 127.0.0.1 8080
+nc -l			Tạo TCP listener			nc -l 8080
+nc -u			UDP mode				nc -u 127.0.0.1 8080
+telnet			TCP client đơn giản			telnet 127.0.0.1 8080
+curl			HTTP client				curl http://127.0.0.1:8080
+
+
+4. Packet capture — cực kỳ quan trọng
+
+Command					Ý nghĩa					Ví dụ
+tcpdump				Bắt packet				sudo tcpdump -i any
+tcpdump -n			Không DNS resolve			sudo tcpdump -n
+tcpdump tcp			Chỉ TCP					sudo tcpdump -n tcp
+tcpdump udp			Chỉ UDP					sudo tcpdump -n udp
+tcpdump port 8080		Packet port 8080			sudo tcpdump -n port 8080
+tcpdump host 192.168.1.10	Packet từ/đến host			sudo tcpdump -n host 192.168.1.10
+tcpdump -X			Hiện payload hex/ASCII			sudo tcpdump -nX port 8080
+
+
+5. Process / FD liên quan socket
+
+Command				Ý nghĩa				Ví dụ
+ps			Xem process			ps aux
+ps -ef			Process đầy đủ			ps -ef
+pgrep			Tìm PID				pgrep server
+kill			Gửi signal			kill -SIGTERM PID
+ls /proc/PID/fd		Xem FD của process		ls -l /proc/1234/fd
+cat /proc/PID/net/tcp	Xem TCP kernel table		cat /proc/1234/net/tcp
+cat /proc/net/tcp	Xem TCP sockets			cat /proc/net/tcp
+
+
+6. Debug chương trình socket
+
+Command						Ý nghĩa				Ví dụ
+gcc					Compile				gcc server.c -o server
+gcc -Wall				Warning				gcc -Wall server.c -o server
+gdb					Debug				gdb ./server
+strace					Theo dõi syscall		strace ./server
+strace -e trace=network			Chỉ network syscall		strace -e trace=network ./server
+strace -e trace=network,read,write	Network + I/O			strace -e trace=network,read,write ./server
+
+
+7. DNS / hostname
+
+Command				Ý nghĩa				Ví dụ
+getent hosts		Tra hostname → IP		getent hosts google.com
+nslookup		DNS lookup			nslookup google.com
+dig			DNS query chi tiết		dig google.com
+host			DNS lookup đơn giản		host google.com
+
+
+1. Xóa kernel 138
+Chạy:
+sudo apt purge linux-image-6.8.0-138-generic linux-headers-6.8.0-138-generic
+
+Sau đó:
+sudo apt autoremove
+
+2. Cập nhật GRUB
+sudo update-grub
+
+3. Kiểm tra
+dpkg -l | grep -E 'linux-image|linux-headers'
+
+Bạn vẫn phải thấy:
+linux-image-6.8.0-136-generic
+linux-headers-6.8.0-136-generic
+
+và:
+uname -r
+
+vẫn là:
+6.8.0-136-generic
+
+
+8. Các lệnh quản lý module
+
+insmod — Nạp module				sudo insmod hello.ko
+
+modprobe — Nạp module có xử lý dependency	sudo modprobe e1000e
+
+Một số lệnh hữu ích:
+# Nạp module
+sudo modprobe hello
+
+# Gỡ module
+sudo modprobe -r hello
+
+# Xem thông tin module
+modinfo hello
+
+# Xem module đang được nạp
+lsmod
+
+# Xem dependency đã biết
+modprobe --show-depends hello
+
+
+Nếu thành công, bạn có thể kiểm tra:		lsmod | grep hello
+
+Xem thông báo kernel:				sudo dmesg | tail -n 20
+
+Hoặc trên hệ thống sử dụng systemd:		sudo journalctl -k -n 20
+
+rmmod — Gỡ module				sudo rmmod hello
+
+Để xem các tham số module công bố:
+modinfo -p hello
+
+Sau khi module được nạp, có thể kiểm tra giá trị qua sysfs:
+cat /sys/module/hello/parameters/count
+#========================================================================================#
+#----------------------------------End Linux command-------------------------------------#
+#========================================================================================#
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#========================================================================================#
+#---------------------------------------Pi command---------------------------------------#
+#========================================================================================#
+
+Quản lý các tài khoản
+Một số lệnh thường dùng:
+
+	Công việc								Lệnh
+Tạo user							sudo adduser username
+Đổi mật khẩu							passwd
+Đổi mật khẩu user						sudo passwd username
+Xem thông tin user						id username
+Thêm user vào nhóm						sudo usermod -aG groupname username
+Xóa user nhưng giữ thư mục home				sudo deluser username
+Xóa user và thư mục home					sudo deluser --remove-home username
+Khóa tài khoản							sudo passwd -l username
+Mở khóa tài khoản						sudo passwd -u username
+Liệt kê user đang đăng nhập					who
+Xem phiên đăng nhập và tiến trình				w
+Liệt kê các tài khoản có thư mục home				ls -la /home
+Kiểm tra tài khoản hiện tại có quyền quản trị hay không	groups
+Kiểm tra cấu hình tài khoản					sudo passwd -S "$(whoami)"
+Kiểm tra SSH đang hoạt động					sudo systemctl status ssh
+Kiểm tra cổng SSH đang lắng nghe				sudo ss -tlnp | grep ssh
+
+#========================================================================================#
+#-------------------------------------End Pi command-------------------------------------#
+#========================================================================================#
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+#========================================================================================#
+#--------------------------------------IOT Node-Red--------------------------------------#
+#========================================================================================#
+
+username: hungmotor
+password: trieuledinh01
+passphrase: xz0eK9J2.AgJnX?E
+
+
+sudo tailscale up
+tailscale status
+tailscale ip -4
+
+                                     Chạy dịch vụ
+                                     
+sudo systemctl start nodered
+sudo systemctl start tailscaled
+
+                              Tắt cả hai dịch vụ ngay lập tức
+                              
+sudo systemctl stop nodered
+sudo systemctl stop tailscaled
+
+                         Cho phép tự khởi động khi Raspberry Pi bật
+                         
+sudo systemctl enable nodered.service
+sudo systemctl enable tailscaled
+
+                      Không cho phép tự khởi động khi Raspberry Pi bật
+                      
+sudo systemctl disable nodered.service
+sudo systemctl disable tailscaled
+
+                                        Kiểm tra lại
+systemctl is-active nodered
+systemctl is-active tailscaled
+
+systemctl is-enabled nodered
+systemctl is-enabled tailscaled
+
+sudo systemctl status nodered.service
+sudo systemctl status tailscaled
+
+#========================================================================================#
+#------------------------------------End IOT Node-Red------------------------------------#
+#========================================================================================#
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------------
+
